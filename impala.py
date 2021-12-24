@@ -11,10 +11,9 @@ import torch.distributions as torch_dist
 import torch.nn as nn
 import torch.optim as optim
 import tree
+from rlego.src import vtrace
 from torch._vmap_internals import vmap
 from tqdm import trange
-
-from rlego.src import vtrace
 
 
 class State(NamedTuple):
@@ -64,7 +63,7 @@ class Agent:
         logits, _ = self._model(observation)
         logits = torch.squeeze(logits, dim=0)
         action = torch_dist.Categorical(logits=logits).sample((1,)).squeeze()
-        return action, logits
+        return action.cpu(), logits.cpu()
 
     def loss(self, trajs: Transition):
         """Computes a loss of trajs wrt params."""
@@ -82,7 +81,7 @@ class Agent:
         baseline_tp1 = baseline_with_bootstrap[1:]
 
         # Remove bootstrap timestep from non-observations.
-        _, actions, behavior_logits = tree.map_structure(lambda t: torch.Tensor(t[:-1]), trajs)
+        _, actions, behavior_logits = tree.map_structure(lambda t: torch.tensor(t[:-1]).to(self._device), trajs)
 
         # Shift step_type/reward/discount back by one, so that actions match the
         # timesteps caused by the action.
@@ -102,11 +101,11 @@ class Agent:
 
         # Note that we use mean here, rather than sum as in canonical IMPALA.
         # Compute policy gradient loss.
-        pg_loss = - (learner_logits * adv * torch.Tensor(mask)).sum(0).mean()
+        pg_loss = - (learner_logits * adv * mask).sum(0).mean()
 
         # Baseline loss.
-        bl_loss = 0.5 * (torch.square(td) * torch.Tensor(mask)).sum(0).mean()
-        ent_loss = learner_policy.entropy().sum(0).mean()
+        bl_loss = 0.5 * (torch.square(td) * mask).sum(0).mean()
+        ent_loss = (learner_policy.entropy() * mask).sum(0).mean()
 
         actor_loss = pg_loss + 0.01 * ent_loss
 
@@ -145,6 +144,7 @@ def run_actor(agent: Agent, get_params: Callable[[], OrderedDict[str, torch.Tens
               num_trajectories: int):
     """Runs an actor to produce num_trajectories trajectories."""
     env = gym.make(config.env_id)
+    env.seed(config.seed)
     obs = env.reset()
     state = State(reward=0., discount=1., observation=obs)
 
@@ -162,7 +162,10 @@ def run_actor(agent: Agent, get_params: Callable[[], OrderedDict[str, torch.Tens
             cumulative_reward += reward
             state = State(reward=reward, observation=next_state, discount=(1 - done) * 1.)
             if done:
-                enqueue_info({"cumulative_reward": cumulative_reward})
+                try:
+                    enqueue_info({"train/return": cumulative_reward}, block=False)
+                except queue.Full:
+                    pass
                 obs = env.reset()
                 state = State(reward=0., discount=1., observation=obs)
                 cumulative_reward = 0
@@ -182,12 +185,14 @@ def run(writer: experiment_buddy.WandbWrapper):
     num_actions = env.action_space.n
     obs_dim = env.observation_space.shape[0]
     torch.manual_seed(config.seed)
+    torch.cuda.manual_seed(config.seed)
+    np.random.seed(config.seed)
 
-    net = SimpleNet(obs_dim, num_actions, config.h_dim)
+    net = SimpleNet(obs_dim, num_actions, config.h_dim).to(config.device)
     behavior = Agent(net, config.gamma, config.device)
 
     # Construct the agent and learner.
-    net = SimpleNet(obs_dim, num_actions, config.h_dim)
+    net = SimpleNet(obs_dim, num_actions, config.h_dim).to(config.device)
     agent = Agent(net, config.gamma, config.device)
     actor_opt = optim.Adam(net.policy.parameters(), config.actor_lr)
     critic_opt = optim.Adam(net.baseline.parameters(), config.critic_lr)
@@ -224,22 +229,22 @@ def run(writer: experiment_buddy.WandbWrapper):
 
 
 class config:
-    trajectories_per_actor = 500
-    num_actors = 2
-    unroll_len = 20
+    device = torch.device("cuda")
     env_id = "CartPole-v0"
+    trajectories_per_actor = 5000
+    num_actors = 4
+    batch_size = 2
+    unroll_len = 20
     gamma = 0.99
     h_dim = 32
     actor_lr = 5e-4
     critic_lr = 5e-3
-    batch_size = 2
     seed = 0
-    device = torch.device("cpu")
 
 
 def main():
     experiment_buddy.register_defaults(dict(vars(config)))
-    writer = experiment_buddy.deploy(host="", disabled=True)
+    writer = experiment_buddy.deploy(host="mila", sweep_yaml="sweep.yaml", proc_num=5)
     run(writer)
 
 
