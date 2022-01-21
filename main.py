@@ -88,7 +88,6 @@ def collect_transitions(data_queue, batch_size):
     for b in range(batch_size):
         transitions = data_queue.get()
         batch.append(transitions)
-    # batch = specs.Transition(*tree.map_structure(lambda *x: torch.stack(x), *batch))
     return batch
 
 
