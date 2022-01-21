@@ -1,0 +1,5 @@
+runs
+.idea
+wandb
+logs
+_*

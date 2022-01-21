@@ -1,0 +1,27 @@
+program: impala.py
+method: bayes
+metric:
+  name: train/return
+  goal: maximize
+parameters:
+  unroll_len:
+    distribution: int_uniform
+    min: 20
+    max: 100
+  actor_lr:
+    distribution: log_uniform
+    max: -3
+    min: -8
+  critic_lr:
+    distribution: log_uniform
+    max: -3
+    min: -8
+  batch_size:
+    distribution: int_uniform
+    min: 2
+    max: 32
+early_terminate:
+  type: hyperband
+  s: 2
+  eta: 3
+  max_iter: 27
