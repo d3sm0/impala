@@ -10,9 +10,9 @@ host = ""
 sweep_yaml = ""  # k"sweep.yaml"
 
 max_steps = int(1e6)
-policy_lr = 0.0006
-critic_lr = 0.001
-trajectory_len = 20
+actor_lr = 0.001
+critic_lr = 0.005
+trajectory_len = 21
 num_actors = 1 if DEBUG else 5
 batch_size = 32
 gamma = 0.99

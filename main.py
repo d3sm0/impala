@@ -13,6 +13,7 @@ from torch._vmap_internals import vmap
 
 import config
 import models
+import specs
 import utils
 
 logger = utils.get_logger("main")
@@ -21,18 +22,21 @@ logger = utils.get_logger("main")
 def evaluate_loss(model, batch):
     policy = model.actor(batch.state)
     v_tm1 = model.critic(batch.state)
-    v_t = model.critic(batch.next_state)
+    with torch.no_grad():
+        v_t = model.critic(batch.next_state)
     r_t = batch.reward
     not_done = (1 - batch.done)
-    pi_old = torch_dist.Categorical(logits=batch.info)  # TODO fix this
+    mask = torch.roll(not_done, 1, dims=(0,))
+    pi_old = torch_dist.Categorical(logits=batch.logits)  # TODO fix this
     rho_tm1 = (policy.log_prob(batch.action) - pi_old.log_prob(batch.action)).exp().detach()
-    adv, errors, _ = vmap(rlego.vtrace_td_error_and_advantage)(v_tm1, v_t, r_t, not_done * config.gamma, rho_tm1)
+    with torch.no_grad():
+        adv, v_target, _ = vmap(rlego.vtrace_td_error_and_advantage)(v_tm1, v_t, r_t, not_done * config.gamma, rho_tm1)
 
-    pi_grad = (- policy.log_prob(batch.action) * adv).sum(1).mean(0)
-    td = 0.5 * (errors.pow(2)).sum(1).mean(0)
-    kl = torch_dist.kl_divergence(policy, pi_old).sum(1).mean(0)
-    loss = pi_grad + 0.5 * td + 0.01 * kl
+    pi_grad = (- policy.log_prob(batch.action) * adv.detach() * mask).sum(0).mean()
+    td = 0.5 * (mask * (v_target - v_t).pow(2)).sum(0).mean()
+    kl = torch_dist.kl_divergence(policy, pi_old).sum(0).mean()
     entropy = policy.entropy().sum(0).mean()
+    loss = pi_grad + 0.5 * td - 0.01 * entropy
     return loss, tree.map_structure(lambda x: x.detach().numpy(),
                                     {"pi_loss": pi_grad, "td": td, "rho": rho_tm1.mean(), "kl": kl, "entropy": entropy})
 
@@ -88,6 +92,7 @@ def collect_transitions(data_queue, batch_size):
     for b in range(batch_size):
         transitions = data_queue.get()
         batch.append(transitions)
+    batch = specs.Transition(*tree.map_structure(lambda *x: torch.stack(x), *batch))
     return batch
 
 
@@ -100,8 +105,8 @@ def writer_loop(writer, writer_queue, frame_counter):
 
 
 def train(model, optimizer, writer):
-    data_queue = multiprocessing.SimpleQueue()
-    model_queue = multiprocessing.SimpleQueue()
+    data_queue = torch.multiprocessing.SimpleQueue()
+    model_queue = torch.multiprocessing.SimpleQueue()
     writer_queue = multiprocessing.SimpleQueue()
     frame_counter = multiprocessing.Value('i', 0)
     model_queue.put(model.actor.state_dict())
@@ -127,13 +132,11 @@ def train(model, optimizer, writer):
 
 
 def train_loop(data_queue, model, model_queue, optimizer, writer_queue):
-    buffer = rlego.Buffer(config.max_steps)
     for global_step in itertools.count():
         with utils.timer() as t:
             batch = collect_transitions(data_queue, config.batch_size)
-        buffer.extend(batch)  # noqa
         logger.info(f"{global_step} in dt:{t():.2f}")
-        loss, loss_info = evaluate_loss(model, buffer.sample(batch_size=config.batch_size))  # noqa
+        loss, loss_info = evaluate_loss(model, batch)  # noqa
         opt_info = update_params(optimizer, model, loss)
         model_queue.put(model.actor.state_dict())
         writer_queue.put({**opt_info, **loss_info})
@@ -152,12 +155,15 @@ def main():
 
     env = gym.make(config.env_id)
     model = models.Agent(obs_dim=env.observation_space.shape[0], action_dim=env.action_space.n, h_dim=config.h_dim)
-    optimizer = torch.optim.RMSprop(model.parameters(), lr=config.policy_lr, momentum=0., eps=0.01)
+    optimizer = torch.optim.RMSprop(
+        [{"params": model.actor.parameters(), "lr": config.actor_lr},
+         {"params": model.critic.parameters(), "lr": config.critic_lr}],
+        momentum=0., eps=0.01)
     del env
 
     train(model, optimizer, writer)
 
 
 if __name__ == '__main__':
-    multiprocessing.set_start_method("spawn")
+    torch.multiprocessing.set_start_method("spawn")
     main()
