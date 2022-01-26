@@ -7,7 +7,7 @@ env_id = "CartPole-v0"
 should_render = False
 proc_num = 5
 host = "mila"
-sweep_yaml = "sweep.yaml"
+sweep_yaml = "" #"sweep.yaml"
 
 max_steps = int(1e6)
 actor_lr = 0.0001
