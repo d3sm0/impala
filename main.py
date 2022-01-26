@@ -36,14 +36,15 @@ def evaluate_loss(model, batch):
     td = 0.5 * (mask * (v_target - v_t).pow(2)).sum(0).mean()
     kl = torch_dist.kl_divergence(policy, pi_old).sum(0).mean()
     entropy = policy.entropy().sum(0).mean()
-    loss = pi_grad + 0.5 * td - 0.01 * entropy
+    loss = pi_grad + 0.5 * td + 0.001 * entropy
     return loss, tree.map_structure(lambda x: x.detach().numpy(),
                                     {"pi_loss": pi_grad, "td": td, "rho": rho_tm1.mean(), "kl": kl, "entropy": entropy})
 
 
-def run_learner(model_queue, data_queue, writer_queue, frame_counter):
+def run_learner(model_queue, data_queue, writer_queue, frame_counter, proc_id):
     env = utils.GymWrapper(gym.make(config.env_id))
-    env.seed(config.seed)
+    env.unwrapped.seed(config.seed)
+    utils.set_seed(config.seed)
     model = models.Actor(obs_dim=env.observation_space.shape[0], action_dim=env.action_space.n, h_dim=config.h_dim)
     state, *_ = env.reset()
     transition = (state, torch.tensor(0.), torch.tensor(0.), torch.zeros_like(state), torch.tensor(0.),
@@ -59,14 +60,14 @@ def run_learner(model_queue, data_queue, writer_queue, frame_counter):
                 logger.info(f"Policy update at {frame_counter.value}")
                 model.load_state_dict(state_dict)
         trajectory.append(transition)
-        _sample_trajectory(env, model, trajectory, writer_queue, trajectory_len)
+        _sample_trajectory(env, model, trajectory, writer_queue, trajectory_len, proc_id)
         with threading.Lock():
             frame_counter.value = frame_counter.value + trajectory_len
         data_queue.put(tree.map_structure(lambda *x: torch.stack(x), *trajectory))
 
 
 @torch.no_grad()
-def _sample_trajectory(env, model, trajectory, writer_queue, trajectory_len):
+def _sample_trajectory(env, model, trajectory, writer_queue, trajectory_len, proc_id):
     state = trajectory[-1][0]
     for t in range(trajectory_len):
         pi = model(state)
@@ -76,7 +77,7 @@ def _sample_trajectory(env, model, trajectory, writer_queue, trajectory_len):
         trajectory.append(transition)
         state = next_state
         if "step" in info.keys():
-            writer_queue.put(info)
+            writer_queue.put((proc_id, info))
 
 
 def update_params(optimizer, model, loss):
@@ -101,7 +102,9 @@ def writer_loop(writer, writer_queue, frame_counter):
         infos = writer_queue.get()
         if infos is None:
             break
-        writer.add_scalars(infos, global_step=frame_counter.value)
+        proc_id, infos = infos
+        if proc_id == 0:
+            writer.add_scalars(infos, global_step=frame_counter.value)
 
 
 def train(model, optimizer, writer):
@@ -111,7 +114,8 @@ def train(model, optimizer, writer):
     frame_counter = multiprocessing.Value('i', 0)
     model_queue.put(model.actor.state_dict())
     actor_procs = [
-        multiprocessing.Process(target=run_learner, args=(model_queue, data_queue, writer_queue, frame_counter)) for _
+        multiprocessing.Process(target=run_learner,
+                                args=(model_queue, data_queue, writer_queue, frame_counter, proc_id)) for proc_id
         in range(config.num_actors)]
     for p in actor_procs:
         p.start()
@@ -119,7 +123,7 @@ def train(model, optimizer, writer):
     writer_thread = threading.Thread(target=writer_loop, args=(writer, writer_queue, frame_counter))
     writer_thread.start()
     try:
-        train_loop(data_queue, model, model_queue, optimizer, writer_queue)
+        train_loop(data_queue, model, model_queue, optimizer, writer_queue, frame_counter)
     except KeyboardInterrupt:
         print("close")
     finally:
@@ -131,7 +135,7 @@ def train(model, optimizer, writer):
             p.join()
 
 
-def train_loop(data_queue, model, model_queue, optimizer, writer_queue):
+def train_loop(data_queue, model, model_queue, optimizer, writer_queue, frame_counter):
     for global_step in itertools.count():
         with utils.timer() as t:
             batch = collect_transitions(data_queue, config.batch_size)
@@ -139,7 +143,9 @@ def train_loop(data_queue, model, model_queue, optimizer, writer_queue):
         loss, loss_info = evaluate_loss(model, batch)  # noqa
         opt_info = update_params(optimizer, model, loss)
         model_queue.put(model.actor.state_dict())
-        writer_queue.put({**opt_info, **loss_info})
+        writer_queue.put((0, {**opt_info, **loss_info}))
+        if frame_counter.value >= config.max_steps:
+            break
 
 
 def main():
