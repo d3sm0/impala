@@ -72,7 +72,7 @@ def _sample_trajectory(env, model, trajectory, writer_queue, trajectory_len, pro
     for t in range(trajectory_len):
         pi = model(state)
         action = pi.sample()
-        next_state, reward, done, info = env.step(action.numpy())
+        next_state, reward, done, info = env.step(action)
         transition = (state, action, reward, next_state, done, pi.logits)
         trajectory.append(transition)
         state = next_state
