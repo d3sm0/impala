@@ -53,7 +53,7 @@ class Actor(nn.Module):
             nn.ReLU(),
             nn.Linear(h_dim, h_dim),
             nn.ReLU(),
-            rlego.SoftmaxPolicy(h_dim, action_dim))
+            rlego.BetaPolicy(h_dim, action_dim))
 
     def forward(self, s):
         out = self.actor(s)
