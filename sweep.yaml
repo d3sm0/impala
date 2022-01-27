@@ -1,7 +1,7 @@
-program: impala.py
+program: main.py
 method: bayes
 metric:
-  name: train/return
+  name: env/return
   goal: maximize
 parameters:
   trajectory_len:
