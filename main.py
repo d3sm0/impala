@@ -27,12 +27,12 @@ def evaluate_loss(model, batch):
     r_t = batch.reward
     not_done = (1 - batch.done)
     mask = torch.roll(not_done, 1, dims=(0,))
-    pi_old = torch_dist.Categorical(logits=batch.logits)  # TODO fix this
-    rho_tm1 = (policy.log_prob(batch.action) - pi_old.log_prob(batch.action)).exp().detach()
+    pi_old = torch_dist.Beta(batch.logits[:, :, :1], batch.logits[:, :, 1:])
+    rho_tm1 = (policy.log_prob(batch.action) - pi_old.log_prob(batch.action)).sum(dim=-1).exp().detach().squeeze(dim=-1)
     with torch.no_grad():
         adv, v_target, _ = vmap(rlego.vtrace_td_error_and_advantage)(v_tm1, v_t, r_t, not_done * config.gamma, rho_tm1)
 
-    pi_grad = (- policy.log_prob(batch.action) * adv.detach() * mask).sum(0).mean()
+    pi_grad = (- policy.log_prob(batch.action).sum(dim=-1).squeeze(dim=-1) * adv.detach() * mask).sum(0).mean()
     td = 0.5 * (mask * (v_target - v_t).pow(2)).sum(0).mean()
     kl = torch_dist.kl_divergence(policy, pi_old).sum(0).mean()
     entropy = policy.entropy().sum(0).mean()
@@ -45,7 +45,7 @@ def run_learner(model_queue, data_queue, writer_queue, frame_counter, proc_id):
     env = utils.GymWrapper(gym.make(config.env_id))
     env.unwrapped.seed(config.seed)
     utils.set_seed(config.seed)
-    model = models.Actor(obs_dim=env.observation_space.shape[0], action_dim=env.action_space.n, h_dim=config.h_dim)
+    model = models.Actor(obs_dim=env.observation_space.shape[0], action_dim=env.action_space.shape[0], h_dim=config.h_dim)
     state, *_ = env.reset()
     trajectory = collections.deque(maxlen=config.trajectory_len + 1)
     for step in itertools.count():
@@ -67,10 +67,10 @@ def run_learner(model_queue, data_queue, writer_queue, frame_counter, proc_id):
 @torch.no_grad()
 def _sample_trajectory(state, env, model, trajectory, writer_queue, trajectory_len, proc_id):
     for t in range(trajectory_len):
-        pi = model(state)
+        pi = model(state.unsqueeze(0))
         action = pi.sample()
-        next_state, reward, done, info = env.step(action)
-        transition = (state, action, reward, next_state, done, pi.logits)
+        next_state, reward, done, info = env.step(action.squeeze(0))
+        transition = (state, action, reward, next_state, done, torch.cat(pi._natural_params))
         trajectory.append(transition)
         state = next_state
         if "step" in info.keys():
@@ -158,7 +158,7 @@ def main():
     )
 
     env = gym.make(config.env_id)
-    model = models.Agent(obs_dim=env.observation_space.shape[0], action_dim=env.action_space.n, h_dim=config.h_dim)
+    model = models.Agent(obs_dim=env.observation_space.shape[0], action_dim=env.action_space.shape[0], h_dim=config.h_dim)
     optimizer = torch.optim.RMSprop(
         [{"params": model.actor.parameters(), "lr": config.actor_lr},
          {"params": model.critic.parameters(), "lr": config.critic_lr}],
