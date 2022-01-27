@@ -47,8 +47,6 @@ def run_learner(model_queue, data_queue, writer_queue, frame_counter, proc_id):
     utils.set_seed(config.seed)
     model = models.Actor(obs_dim=env.observation_space.shape[0], action_dim=env.action_space.n, h_dim=config.h_dim)
     state, *_ = env.reset()
-    transition = (state, torch.tensor(0.), torch.tensor(0.), torch.zeros_like(state), torch.tensor(0.),
-                  torch.zeros(env.action_space.n))
     trajectory = collections.deque(maxlen=config.trajectory_len + 1)
     for step in itertools.count():
         trajectory_len = config.trajectory_len + int(step == 0)
@@ -57,27 +55,27 @@ def run_learner(model_queue, data_queue, writer_queue, frame_counter, proc_id):
             if state_dict is None:
                 break
             else:
-                logger.info(f"Policy update at {frame_counter.value}")
                 model.load_state_dict(state_dict)
-        trajectory.append(transition)
-        _sample_trajectory(env, model, trajectory, writer_queue, trajectory_len, proc_id)
+        if step % 100 == 0:
+            logger.info(f"Policy update at {frame_counter.value}")
+        state = _sample_trajectory(state, env, model, trajectory, writer_queue, trajectory_len, proc_id)
         with threading.Lock():
             frame_counter.value = frame_counter.value + trajectory_len
         data_queue.put(tree.map_structure(lambda *x: torch.stack(x), *trajectory))
 
 
 @torch.no_grad()
-def _sample_trajectory(env, model, trajectory, writer_queue, trajectory_len, proc_id):
-    state = trajectory[-1][0]
+def _sample_trajectory(state, env, model, trajectory, writer_queue, trajectory_len, proc_id):
     for t in range(trajectory_len):
         pi = model(state)
         action = pi.sample()
-        next_state, reward, done, info = env.step(action.numpy())
+        next_state, reward, done, info = env.step(action)
         transition = (state, action, reward, next_state, done, pi.logits)
         trajectory.append(transition)
         state = next_state
         if "step" in info.keys():
             writer_queue.put((proc_id, info))
+    return state
 
 
 def update_params(optimizer, model, loss):
