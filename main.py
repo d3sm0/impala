@@ -57,8 +57,9 @@ def run_learner(model_queue, data_queue, writer_queue, frame_counter, proc_id):
             if state_dict is None:
                 break
             else:
-                logger.info(f"Policy update at {frame_counter.value}")
                 model.load_state_dict(state_dict)
+        if step % 100 == 0:
+            logger.info(f"Policy update at {frame_counter.value}")
         trajectory.append(transition)
         _sample_trajectory(env, model, trajectory, writer_queue, trajectory_len, proc_id)
         with threading.Lock():
@@ -72,7 +73,7 @@ def _sample_trajectory(env, model, trajectory, writer_queue, trajectory_len, pro
     for t in range(trajectory_len):
         pi = model(state)
         action = pi.sample()
-        next_state, reward, done, info = env.step(action.numpy())
+        next_state, reward, done, info = env.step(action)
         transition = (state, action, reward, next_state, done, pi.logits)
         trajectory.append(transition)
         state = next_state
@@ -153,7 +154,7 @@ def main():
     writer = buddy.deploy(
         proc_num=config.proc_num,
         host=config.host,
-        sweep_yaml=config.sweep_yaml,
+        sweep_definition=config.sweep_yaml,
         disabled=config.DEBUG,
         wandb_kwargs={"project": "impala"},
         extra_modules=["python/3.7", "cuda/11.1/cudnn/8.0"],
