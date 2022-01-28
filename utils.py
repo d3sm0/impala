@@ -34,6 +34,7 @@ class GymWrapper(gym.Wrapper):
             }
             self.should_reset = True
         self.t += 1
+        r = r/100
         return torch.from_numpy(s).to(torch.float32), torch.tensor(r, dtype=torch.float32), torch.tensor(d, dtype=torch.float32), info
 
     def reset(self, **kwargs):
