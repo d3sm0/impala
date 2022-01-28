@@ -5,14 +5,14 @@ import torch
 DEBUG = sys.gettrace() is not None
 env_id = "CartPole-v0"
 should_render = False
-if DEBUG:
-    proc_num = 1
-    host = ""
-    sweep_yaml = ""
-else:
-    proc_num = 5
-    host = "mila"
-    sweep_yaml = "sweep.yaml"
+# if DEBUG:
+#     proc_num = 1
+#     host = ""
+#     sweep_yaml = ""
+# else:
+proc_num = 5
+host = "mila"
+sweep_yaml = "sweep.yaml"
 
 max_steps = int(1e6)
 actor_lr = 0.0001
