@@ -28,15 +28,15 @@ def evaluate_loss(model, batch):
     not_done = (1 - batch.done)
     mask = torch.roll(not_done, 1, dims=(0,))
     pi_old = torch_dist.Categorical(logits=batch.logits)  # TODO fix this
-    rho_tm1 = (policy.log_prob(batch.action) - pi_old.log_prob(batch.action)).exp().detach()
-    with torch.no_grad():
-        adv, v_target, _ = vmap(rlego.vtrace_td_error_and_advantage)(v_tm1, v_t, r_t, not_done * config.gamma, rho_tm1)
-
-    pi_grad = (- policy.log_prob(batch.action) * adv.detach() * mask).sum(0).mean()
+    rho_tm1 = (policy.log_prob(batch.action) - pi_old.log_prob(batch.action)).exp()
+    adv, v_target, _ = vmap(rlego.vtrace_td_error_and_advantage)(v_tm1.detach(), v_t, r_t, not_done * config.gamma, rho_tm1.detach())
+    # pi_grad = - (rlego.policy_gradient(policy, batch.action, adv.detach() * mask).sum(0).mean())
+    pi_grad = - (rlego.mdpo(policy, pi_old, batch.action, adv*mask)).sum(0).mean()
     td = 0.5 * (mask * (v_target - v_t).pow(2)).sum(0).mean()
-    kl = torch_dist.kl_divergence(policy, pi_old).sum(0).mean()
-    entropy = policy.entropy().sum(0).mean()
-    loss = pi_grad + 0.5 * td + 0.001 * entropy
+    kl = (torch_dist.kl_divergence(policy, pi_old) * mask).sum(0).mean()
+    entropy = (policy.entropy() * mask).sum(0).mean()
+    loss = pi_grad + 0.5 * td + 0.001 * kl
+    assert torch.isfinite(loss)
     return loss, tree.map_structure(lambda x: x.detach().numpy(),
                                     {"pi_loss": pi_grad, "td": td, "rho": rho_tm1.mean(), "kl": kl, "entropy": entropy})
 
