@@ -107,21 +107,24 @@ def writer_loop(writer, writer_queue, frame_counter):
 
 def train(model, optimizer, writer):
     data_queue = torch.multiprocessing.SimpleQueue()
-    model_queue = torch.multiprocessing.SimpleQueue()
     writer_queue = multiprocessing.SimpleQueue()
     frame_counter = multiprocessing.Value('i', 0)
-    model_queue.put(model.actor.state_dict())
-    actor_procs = [
-        multiprocessing.Process(target=run_learner,
-                                args=(model_queue, data_queue, writer_queue, frame_counter, proc_id)) for proc_id
-        in range(config.num_actors)]
+    model_queues = {}
+    actor_procs = []
+    for proc_idx in range(config.num_actors):
+        model_queue = torch.multiprocessing.SimpleQueue()
+        model_queue.put(model.actor.state_dict())
+        p = multiprocessing.Process(target=run_learner,
+                                    args=(model_queue, data_queue, writer_queue, frame_counter, proc_idx))
+        model_queues[proc_idx] = model_queue
+        actor_procs.append(p)
     for p in actor_procs:
         p.start()
 
     writer_thread = threading.Thread(target=writer_loop, args=(writer, writer_queue, frame_counter))
     writer_thread.start()
     try:
-        train_loop(data_queue, model, model_queue, optimizer, writer_queue, frame_counter)
+        train_loop(data_queue, model, model_queues, optimizer, writer_queue, frame_counter)
     except KeyboardInterrupt:
         print("close")
     finally:
@@ -133,14 +136,15 @@ def train(model, optimizer, writer):
             p.join()
 
 
-def train_loop(data_queue, model, model_queue, optimizer, writer_queue, frame_counter):
+def train_loop(data_queue, model, model_queues, optimizer, writer_queue, frame_counter):
     for global_step in itertools.count():
         with utils.timer() as t:
             batch = collect_transitions(data_queue, config.batch_size)
         logger.info(f"{global_step} in dt:{t():.2f}")
         loss, loss_info = evaluate_loss(model, batch)  # noqa
         opt_info = update_params(optimizer, model, loss)
-        model_queue.put(model.actor.state_dict())
+        for proc_idx, model_queue in model_queues.items():
+            model_queue.put(model.actor.state_dict())
         writer_queue.put((0, {**opt_info, **loss_info}))
         if frame_counter.value >= config.max_steps:
             break
