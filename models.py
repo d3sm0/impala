@@ -53,7 +53,7 @@ class Actor(nn.Module):
             nn.ReLU(),
             nn.Linear(h_dim, h_dim),
             nn.ReLU(),
-            rlego.BetaPolicy(h_dim, action_dim))
+            rlego.GaussianPolicy(h_dim, action_dim))
 
     def forward(self, s):
         out = self.actor(s)
