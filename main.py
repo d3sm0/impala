@@ -27,7 +27,8 @@ def evaluate_loss(model, batch):
     r_t = batch.reward
     not_done = (1 - batch.done)
     mask = torch.roll(not_done, 1, dims=(0,))
-    pi_old = torch_dist.Beta(batch.logits[:, :, :1], batch.logits[:, :, 1:])
+    logits = batch.logits.squeeze(dim=2)
+    pi_old = torch_dist.Normal(logits[:, :, :1], logits[:, :, -1:])
     rho_tm1 = (policy.log_prob(batch.action) - pi_old.log_prob(batch.action)).sum(dim=-1).exp().detach().squeeze(dim=-1)
     with torch.no_grad():
         adv, v_target, _ = vmap(rlego.vtrace_td_error_and_advantage)(v_tm1, v_t, r_t, not_done * config.gamma, rho_tm1)
@@ -45,7 +46,8 @@ def run_learner(model_queue, data_queue, writer_queue, frame_counter, proc_id):
     env = utils.GymWrapper(gym.make(config.env_id))
     env.unwrapped.seed(config.seed)
     utils.set_seed(config.seed)
-    model = models.Actor(obs_dim=env.observation_space.shape[0], action_dim=env.action_space.shape[0], h_dim=config.h_dim)
+    model = models.Actor(obs_dim=env.observation_space.shape[0], action_dim=env.action_space.shape[0],
+                         h_dim=config.h_dim)
     state, *_ = env.reset()
     trajectory = collections.deque(maxlen=config.trajectory_len + 1)
     for step in itertools.count():
@@ -68,9 +70,9 @@ def run_learner(model_queue, data_queue, writer_queue, frame_counter, proc_id):
 def _sample_trajectory(state, env, model, trajectory, writer_queue, trajectory_len, proc_id):
     for t in range(trajectory_len):
         pi = model(state.unsqueeze(0))
-        action = pi.sample()
-        next_state, reward, done, info = env.step(action.squeeze(0))
-        transition = (state, action, reward, next_state, done, torch.cat(pi._natural_params))
+        action = pi.sample().squeeze(0)
+        next_state, reward, done, info = env.step(action)
+        transition = (state, action, reward, next_state, done, torch.cat([pi.loc, pi.scale], dim=-1))
         trajectory.append(transition)
         state = next_state
         if "step" in info.keys():
@@ -107,21 +109,25 @@ def writer_loop(writer, writer_queue, frame_counter):
 
 def train(model, optimizer, writer):
     data_queue = torch.multiprocessing.SimpleQueue()
-    model_queue = torch.multiprocessing.SimpleQueue()
+    # model_queue = torch.multiprocessing.SimpleQueue()
     writer_queue = multiprocessing.SimpleQueue()
     frame_counter = multiprocessing.Value('i', 0)
-    model_queue.put(model.actor.state_dict())
-    actor_procs = [
-        multiprocessing.Process(target=run_learner,
-                                args=(model_queue, data_queue, writer_queue, frame_counter, proc_id)) for proc_id
-        in range(config.num_actors)]
+    model_queues = {}
+    actor_procs = []
+    for proc_idx in range(config.num_actors):
+        model_queue = torch.multiprocessing.SimpleQueue()
+        model_queue.put(model.actor.state_dict())
+        p = multiprocessing.Process(target=run_learner,
+                                    args=(model_queue, data_queue, writer_queue, frame_counter, proc_idx))
+        model_queues[proc_idx] = model_queue
+        actor_procs.append(p)
     for p in actor_procs:
         p.start()
 
     writer_thread = threading.Thread(target=writer_loop, args=(writer, writer_queue, frame_counter))
     writer_thread.start()
     try:
-        train_loop(data_queue, model, model_queue, optimizer, writer_queue, frame_counter)
+        train_loop(data_queue, model, model_queues, optimizer, writer_queue, frame_counter)
     except KeyboardInterrupt:
         print("close")
     finally:
@@ -133,14 +139,15 @@ def train(model, optimizer, writer):
             p.join()
 
 
-def train_loop(data_queue, model, model_queue, optimizer, writer_queue, frame_counter):
+def train_loop(data_queue, model, model_queues, optimizer, writer_queue, frame_counter):
     for global_step in itertools.count():
         with utils.timer() as t:
             batch = collect_transitions(data_queue, config.batch_size)
         logger.info(f"{global_step} in dt:{t():.2f}")
         loss, loss_info = evaluate_loss(model, batch)  # noqa
         opt_info = update_params(optimizer, model, loss)
-        model_queue.put(model.actor.state_dict())
+        for proc_idx, model_queue in model_queues.items():
+            model_queue.put(model.actor.state_dict())
         writer_queue.put((0, {**opt_info, **loss_info}))
         if frame_counter.value >= config.max_steps:
             break
@@ -158,7 +165,8 @@ def main():
     )
 
     env = gym.make(config.env_id)
-    model = models.Agent(obs_dim=env.observation_space.shape[0], action_dim=env.action_space.shape[0], h_dim=config.h_dim)
+    model = models.Agent(obs_dim=env.observation_space.shape[0], action_dim=env.action_space.shape[0],
+                         h_dim=config.h_dim)
     optimizer = torch.optim.RMSprop(
         [{"params": model.actor.parameters(), "lr": config.actor_lr},
          {"params": model.critic.parameters(), "lr": config.critic_lr}],
