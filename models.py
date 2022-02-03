@@ -65,12 +65,10 @@ class Agent(nn.Module):
 
     def __init__(self, obs_dim: int, action_dim: int, h_dim: int = 32):
         super().__init__()
-        self._num_actions = action_dim
         self.actor = Actor(obs_dim, action_dim, h_dim)
         self.critic = VFunction(obs_dim, h_dim)
 
     def forward(self, observation) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Process a batch of observations."""
         hidden = observation
         policy = self.actor(hidden)
         baseline = self.critic(hidden)
