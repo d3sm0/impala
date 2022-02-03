@@ -1,8 +1,6 @@
-import sys
-
 import torch
 
-DEBUG = sys.gettrace() is not None
+DEBUG = True  # sys.gettrace() is not None
 # env_id = "CartPole-v0"
 env_id = "Pendulum-v0"
 should_render = False
@@ -18,8 +16,8 @@ else:
 max_steps = int(1e6)
 actor_lr = 0.0001
 critic_lr = 0.001
-trajectory_len = 20
-num_actors = 1 if DEBUG else 5
+trajectory_len = 5
+num_actors = 5  # if not DEBUG else 5
 batch_size = 32
 actor_epochs = 5
 gamma = 0.99

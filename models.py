@@ -11,9 +11,11 @@ class QFunction(nn.Module):
 
         self._critic = nn.Sequential(
             nn.Linear(obs_dim, h_dim),
-            nn.ReLU(),
-            nn.Linear(h_dim, h_dim),
-            nn.ReLU(),
+            # nn.Tanh(),
+            # nn.Linear(h_dim, h_dim),
+            # nn.ReLU(),
+            # nn.Linear(h_dim, h_dim),
+            # nn.ReLU(),
         )
         self._add_action = nn.Sequential(nn.Linear(h_dim + action_dim, h_dim), nn.ReLU())
         self._out = nn.Linear(h_dim, 1)
@@ -31,11 +33,11 @@ class VFunction(nn.Module):
 
         self._critic = nn.Sequential(
             nn.Linear(obs_dim, h_dim),
-            nn.ReLU(),
-            nn.Linear(h_dim, h_dim),
-            nn.ReLU(),
-            nn.Linear(h_dim, h_dim),
-            nn.ReLU(),
+            # nn.Tanh(),
+            # nn.Linear(h_dim, h_dim),
+            # nn.ReLU(),
+            # nn.Linear(h_dim, h_dim),
+            # nn.ReLU(),
             nn.Linear(h_dim, 1)
         )
 
@@ -48,11 +50,11 @@ class Actor(nn.Module):
         super().__init__()
         self.actor = nn.Sequential(
             nn.Linear(obs_dim, h_dim),
-            nn.ReLU(),
-            nn.Linear(h_dim, h_dim),
-            nn.ReLU(),
-            nn.Linear(h_dim, h_dim),
-            nn.ReLU(),
+            # nn.Tanh(),
+            # nn.Linear(h_dim, h_dim),
+            # nn.ReLU(),
+            # nn.Linear(h_dim, h_dim),
+            # nn.ReLU(),
             rlego.GaussianPolicy(h_dim, action_dim))
 
     def forward(self, s):
@@ -67,6 +69,7 @@ class Agent(nn.Module):
         super().__init__()
         self.actor = Actor(obs_dim, action_dim, h_dim)
         self.critic = VFunction(obs_dim, h_dim)
+        self.q = QFunction(obs_dim, action_dim, h_dim)
 
     def forward(self, observation) -> Tuple[torch.Tensor, torch.Tensor]:
         hidden = observation

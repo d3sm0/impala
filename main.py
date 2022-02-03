@@ -4,7 +4,6 @@ import multiprocessing
 import threading
 
 import experiment_buddy as buddy
-import gym
 import rlego
 import torch
 import torch.distributions as torch_dist
@@ -12,41 +11,58 @@ import tree
 from torch._vmap_internals import vmap
 
 import config
+import lqr
 import models
 import specs
 import utils
+
+torch.autograd.set_detect_anomaly(True)
 
 logger = utils.get_logger("main")
 batched_vtrace = vmap(rlego.vtrace_td_error_and_advantage)
 
 
 def evaluate_loss(model, batch):
-    policy = model.actor(batch.state)
     v_tm1 = model.critic(batch.state)
-    with torch.no_grad():
-        v_t = model.critic(batch.next_state)
-    r_t = batch.reward
     not_done = (1 - batch.done)
     mask = torch.roll(not_done, 1, dims=(0,))
+    with torch.no_grad():
+        policy = model.actor(batch.state)
+        v_t = model.critic(batch.next_state)
+    q_tm1 = model.q(batch.state, policy.loc)
+    r_t = batch.reward
     pi_old = torch_dist.Normal(*torch.split(batch.logits, dim=-1, split_size_or_sections=1))
     rho_tm1 = (policy.log_prob(batch.action) - pi_old.log_prob(batch.action)).sum(-1).exp()
-    adv, v_target, _ = batched_vtrace(v_tm1.detach(), v_t, r_t, not_done * config.gamma,
-                                      rho_tm1.detach())
-    # adv = (adv - adv.mean(1, keepdim=True)) / adv.std(1, keepdim=True)
-    # pi_grad = - (rlego.policy_gradient(policy, batch.action, adv.detach() * mask).sum(0).mean())
-    pi_grad, kl = rlego.mdpo(policy, pi_old, batch.action, adv * mask)
+    adv, v_target, q_target = batched_vtrace(v_tm1.detach(), v_t, r_t, not_done * config.gamma,
+                                             rho_tm1.detach())
+    v_target = v_target # / v_target.max()
+    q_target = q_target # / q_target.max()
     td = 0.5 * (mask * (v_target - v_tm1).pow(2)).sum(0).mean()
+    q_learning = 0.5 * (mask * (q_target - q_tm1).pow(2)).sum(0).mean()
+    td_loss = 0.5 * (td + q_learning)
+    return td_loss, {"q_loss": q_learning.detach(),
+                     "td_loss": td_loss.detach(),
+                     "rho": rho_tm1.mean()
+                     }
+
+
+def eval_pi(model, batch):
+    not_done = (1 - batch.done)
+    mask = torch.roll(not_done, 1, dims=(0,))
+    policy = model.actor(batch.state)
+    pi_old = torch_dist.Normal(*torch.split(batch.logits, dim=-1, split_size_or_sections=1))
     entropy = (policy.entropy().sum(dim=-1) * mask).sum(0).mean()
+    pi_grad = model.q(batch.state, policy.loc).sum(0).mean()
     kl = torch_dist.kl_divergence(policy, pi_old).sum(0).mean()
-    pi_grad = pi_grad.sum(0).mean()
-    loss = -pi_grad + 0.5 * td + 0.001 * kl
-    assert torch.isfinite(loss)
-    return loss, tree.map_structure(lambda x: x.detach().numpy(),
-                                    {"pi_loss": pi_grad, "td": td, "rho": rho_tm1.mean(), "kl": kl, "entropy": entropy})
+    pi_loss = - pi_grad + 0.01 * kl
+    info = tree.map_structure(lambda x: x.detach().numpy(),
+                              {"pi_loss": pi_grad, "kl": kl, "entropy": entropy})
+    return pi_loss, info
 
 
 def run_learner(model_queue, data_queue, writer_queue, frame_counter, proc_id):
-    env = utils.GymWrapper(gym.make(config.env_id))
+    # gym.make(config.env_id)
+    env = utils.GymWrapper(lqr.Lqg())
     env.unwrapped.seed(config.seed)
     utils.set_seed(config.seed)
     model = models.Actor(obs_dim=env.observation_space.shape[0],
@@ -143,16 +159,18 @@ def train(model, optimizer, writer):
 
 
 def train_loop(data_queue, model, model_queues, optimizer, writer_queue, frame_counter):
+    pi_opt, critic_opt = optimizer
     for global_step in itertools.count():
         with utils.timer() as t:
             batch = collect_transitions(data_queue, config.batch_size)
         logger.info(f"{global_step} in dt:{t():.2f}")
-        for _ in range(config.actor_epochs):
-            loss, loss_info = evaluate_loss(model, batch)  # noqa
-            opt_info = update_params(optimizer, model, loss)
+        loss, loss_info = evaluate_loss(model, batch)  # noqa
+        td_info = update_params(critic_opt, model, loss)
+        loss, pi_info = eval_pi(model, batch)  # noqa
+        opt_info = update_params(pi_opt, model, loss)
         for proc_idx, model_queue in model_queues.items():
             model_queue.put(model.actor.state_dict())
-        writer_queue.put((0, {**opt_info, **loss_info}))
+        writer_queue.put((0, {**opt_info, **loss_info, **td_info, **pi_info}))
         if frame_counter.value >= config.max_steps:
             break
 
@@ -163,23 +181,31 @@ def main():
         proc_num=config.proc_num,
         host=config.host,
         sweep_definition=config.sweep_yaml,
-        disabled=config.DEBUG,
+        disabled=False,
         wandb_kwargs={"project": "impala"},
         extra_modules=["python/3.7", "cuda/11.1/cudnn/8.0"],
     )
 
-    env = gym.make(config.env_id)
+    # env = gym.make(config.env_id)
+    env = lqr.Lqg()
     model = models.Agent(obs_dim=env.observation_space.shape[0], action_dim=env.action_space.shape[0],
                          h_dim=config.h_dim)
-    optimizer = torch.optim.RMSprop(
-        [{"params": model.actor.parameters(), "lr": config.actor_lr},
-         {"params": model.critic.parameters(), "lr": config.critic_lr}],
+    critic_opt = torch.optim.RMSprop(
+        [
+            {"params": model.critic.parameters(), "lr": config.critic_lr},
+            {"params": model.q.parameters(), "lr": config.critic_lr}
+        ],
+        momentum=0.,
+        eps=0.01
+    )
+    pi_opt = torch.optim.RMSprop(
+        [{"params": model.actor.parameters(), "lr": config.actor_lr}, ],
         momentum=0.,
         eps=0.01
     )
     del env
 
-    train(model, optimizer, writer)
+    train(model, (pi_opt, critic_opt), writer)
 
 
 if __name__ == '__main__':
