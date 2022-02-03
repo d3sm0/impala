@@ -30,12 +30,12 @@ def evaluate_loss(model, batch):
     pi_old = torch_dist.Categorical(logits=batch.logits)  # TODO fix this
     rho_tm1 = (policy.log_prob(batch.action) - pi_old.log_prob(batch.action)).exp()
     adv, v_target, _ = vmap(rlego.vtrace_td_error_and_advantage)(v_tm1.detach(), v_t, r_t, not_done * config.gamma, rho_tm1.detach())
-    # pi_grad = - (rlego.policy_gradient(policy, batch.action, adv.detach() * mask).sum(0).mean())
-    pi_grad = - (rlego.mdpo(policy, pi_old, batch.action, adv*mask)).sum(0).mean()
-    td = 0.5 * (mask * (v_target - v_t).pow(2)).sum(0).mean()
+    pi_grad = - (rlego.policy_gradient(policy, batch.action, adv.detach() * mask).sum(0).mean())
+    # pi_grad = - (rlego.mdpo(policy, pi_old, batch.action, adv*mask)).sum(0).mean()
+    td = 0.5 * (mask * (v_target - v_tm1).pow(2)).sum(0).mean()
     kl = (torch_dist.kl_divergence(policy, pi_old) * mask).sum(0).mean()
     entropy = (policy.entropy() * mask).sum(0).mean()
-    loss = pi_grad + 0.5 * td + 0.001 * kl
+    loss = pi_grad + 0.5 * td + 0.001 * entropy
     assert torch.isfinite(loss)
     return loss, tree.map_structure(lambda x: x.detach().numpy(),
                                     {"pi_loss": pi_grad, "td": td, "rho": rho_tm1.mean(), "kl": kl, "entropy": entropy})
@@ -155,7 +155,7 @@ def main():
     writer = buddy.deploy(
         proc_num=config.proc_num,
         host=config.host,
-        sweep_yaml=config.sweep_yaml,
+        sweep_definition=config.sweep_yaml,
         disabled=config.DEBUG,
         wandb_kwargs={"project": "impala"},
         extra_modules=["python/3.7", "cuda/11.1/cudnn/8.0"],
