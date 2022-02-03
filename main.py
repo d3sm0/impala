@@ -17,6 +17,7 @@ import specs
 import utils
 
 logger = utils.get_logger("main")
+batched_vtrace = vmap(rlego.vtrace_td_error_and_advantage)
 
 
 def evaluate_loss(model, batch):
@@ -29,9 +30,10 @@ def evaluate_loss(model, batch):
     mask = torch.roll(not_done, 1, dims=(0,))
     pi_old = torch_dist.Normal(*torch.split(batch.logits, dim=-1, split_size_or_sections=1))
     rho_tm1 = (policy.log_prob(batch.action) - pi_old.log_prob(batch.action)).sum(-1).exp()
-    adv, v_target, _ = vmap(rlego.vtrace_td_error_and_advantage)(v_tm1.detach(), v_t, r_t, not_done * config.gamma,
-                                                                 rho_tm1.detach())
+    adv, v_target, _ = batched_vtrace(v_tm1.detach(), v_t, r_t, not_done * config.gamma,
+                                      rho_tm1.detach())
     # pi_grad = - (rlego.policy_gradient(policy, batch.action, adv.detach() * mask).sum(0).mean())
+    adv = (adv - adv.mean(1, keepdim=True)) / adv.std(1, keepdim=True)
     pi_grad, kl = rlego.mdpo(policy, pi_old, batch.action, adv * mask)
     td = 0.5 * (mask * (v_target - v_tm1).pow(2)).sum(0).mean()
     entropy = (policy.entropy().sum(dim=-1) * mask).sum(0).mean()
@@ -145,8 +147,9 @@ def train_loop(data_queue, model, model_queues, optimizer, writer_queue, frame_c
         with utils.timer() as t:
             batch = collect_transitions(data_queue, config.batch_size)
         logger.info(f"{global_step} in dt:{t():.2f}")
-        loss, loss_info = evaluate_loss(model, batch)  # noqa
-        opt_info = update_params(optimizer, model, loss)
+        for _ in range(5):
+            loss, loss_info = evaluate_loss(model, batch)  # noqa
+            opt_info = update_params(optimizer, model, loss)
         for proc_idx, model_queue in model_queues.items():
             model_queue.put(model.actor.state_dict())
         writer_queue.put((0, {**opt_info, **loss_info}))
