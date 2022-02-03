@@ -17,7 +17,7 @@ sweep_yaml = "" # "sweep.yaml"
 
 max_steps = int(1e6)
 actor_lr = 0.0001
-critic_lr = 0.005
+critic_lr = 0.001
 trajectory_len = 20
 num_actors = 5 #  if DEBUG else 5
 batch_size = 32

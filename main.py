@@ -27,17 +27,16 @@ def evaluate_loss(model, batch):
     r_t = batch.reward
     not_done = (1 - batch.done)
     mask = torch.roll(not_done, 1, dims=(0,))
-    logits = batch.logits.squeeze(dim=2)
-    pi_old = torch_dist.Normal(logits[:, :, :1], logits[:, :, -1:])
-    rho_tm1 = (policy.log_prob(batch.action) - pi_old.log_prob(batch.action)).sum(dim=-1).exp().detach().squeeze(dim=-1)
-    with torch.no_grad():
-        adv, v_target, _ = vmap(rlego.vtrace_td_error_and_advantage)(v_tm1, v_t, r_t, not_done * config.gamma, rho_tm1)
-
-    pi_grad = (- policy.log_prob(batch.action).sum(dim=-1).squeeze(dim=-1) * adv.detach() * mask).sum(0).mean()
+    pi_old = torch_dist.Categorical(logits=batch.logits)  # TODO fix this
+    rho_tm1 = (policy.log_prob(batch.action) - pi_old.log_prob(batch.action)).exp()
+    adv, v_target, _ = vmap(rlego.vtrace_td_error_and_advantage)(v_tm1.detach(), v_t, r_t, not_done * config.gamma, rho_tm1.detach())
+    # pi_grad = - (rlego.policy_gradient(policy, batch.action, adv.detach() * mask).sum(0).mean())
+    pi_grad = - (rlego.mdpo(policy, pi_old, batch.action, adv*mask)).sum(0).mean()
     td = 0.5 * (mask * (v_target - v_t).pow(2)).sum(0).mean()
-    kl = torch_dist.kl_divergence(policy, pi_old).sum(0).mean()
-    entropy = policy.entropy().sum(0).mean()
-    loss = pi_grad + 0.5 * td + 0.001 * entropy
+    kl = (torch_dist.kl_divergence(policy, pi_old) * mask).sum(0).mean()
+    entropy = (policy.entropy() * mask).sum(0).mean()
+    loss = pi_grad + 0.5 * td + 0.001 * kl
+    assert torch.isfinite(loss)
     return loss, tree.map_structure(lambda x: x.detach().numpy(),
                                     {"pi_loss": pi_grad, "td": td, "rho": rho_tm1.mean(), "kl": kl, "entropy": entropy})
 
@@ -46,8 +45,7 @@ def run_learner(model_queue, data_queue, writer_queue, frame_counter, proc_id):
     env = utils.GymWrapper(gym.make(config.env_id))
     env.unwrapped.seed(config.seed)
     utils.set_seed(config.seed)
-    model = models.Actor(obs_dim=env.observation_space.shape[0], action_dim=env.action_space.shape[0],
-                         h_dim=config.h_dim)
+    model = models.Actor(obs_dim=env.observation_space.shape[0], action_dim=env.action_space.n, h_dim=config.h_dim)
     state, *_ = env.reset()
     trajectory = collections.deque(maxlen=config.trajectory_len + 1)
     for step in itertools.count():
@@ -69,10 +67,10 @@ def run_learner(model_queue, data_queue, writer_queue, frame_counter, proc_id):
 @torch.no_grad()
 def _sample_trajectory(state, env, model, trajectory, writer_queue, trajectory_len, proc_id):
     for t in range(trajectory_len):
-        pi = model(state.unsqueeze(0))
-        action = pi.sample().squeeze(0)
+        pi = model(state)
+        action = pi.sample()
         next_state, reward, done, info = env.step(action)
-        transition = (state, action, reward, next_state, done, torch.cat([pi.loc, pi.scale], dim=-1))
+        transition = (state, action, reward, next_state, done, pi.logits)
         trajectory.append(transition)
         state = next_state
         if "step" in info.keys():
@@ -109,7 +107,6 @@ def writer_loop(writer, writer_queue, frame_counter):
 
 def train(model, optimizer, writer):
     data_queue = torch.multiprocessing.SimpleQueue()
-    # model_queue = torch.multiprocessing.SimpleQueue()
     writer_queue = multiprocessing.SimpleQueue()
     frame_counter = multiprocessing.Value('i', 0)
     model_queues = {}
@@ -165,8 +162,7 @@ def main():
     )
 
     env = gym.make(config.env_id)
-    model = models.Agent(obs_dim=env.observation_space.shape[0], action_dim=env.action_space.shape[0],
-                         h_dim=config.h_dim)
+    model = models.Agent(obs_dim=env.observation_space.shape[0], action_dim=env.action_space.n, h_dim=config.h_dim)
     optimizer = torch.optim.RMSprop(
         [{"params": model.actor.parameters(), "lr": config.actor_lr},
          {"params": model.critic.parameters(), "lr": config.critic_lr}],
