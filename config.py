@@ -1,6 +1,7 @@
 import torch
+import sys
 
-DEBUG = True  # sys.gettrace() is not None
+DEBUG = sys.gettrace() is not None
 # env_id = "CartPole-v0"
 env_id = "Pendulum-v0"
 should_render = False
