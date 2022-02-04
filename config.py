@@ -1,14 +1,16 @@
+import sys
+
 import torch
 
-DEBUG = True  # sys.gettrace() is not None
+DEBUG = sys.gettrace() is not None
 # env_id = "CartPole-v0"
 env_id = "Pendulum-v0"
 should_render = False
-if DEBUG:
-    proc_num = 1
-    host = ""
-    sweep_yaml = ""
-else:
+deploy = True
+proc_num = 1
+host = ""
+sweep_yaml = ""
+if deploy and not DEBUG:
     proc_num = 5
     host = "mila"
     sweep_yaml = "sweep.yaml"
@@ -17,12 +19,13 @@ max_steps = int(1e6)
 actor_lr = 0.0001
 critic_lr = 0.001
 trajectory_len = 5
-num_actors = 5  # if not DEBUG else 5
+num_actors = 5 if not DEBUG else 1
 batch_size = 32
 actor_epochs = 5
 gamma = 0.99
 save_every = 100
 grad_clip = 40.
+pi_epochs = 5
 
 seed = 33
 h_dim = 64

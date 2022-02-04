@@ -29,14 +29,12 @@ def evaluate_loss(model, batch):
     with torch.no_grad():
         policy = model.actor(batch.state)
         v_t = model.critic(batch.next_state)
-    q_tm1 = model.q(batch.state, policy.loc)
+    q_tm1 = model.q(batch.state, batch.action)
     r_t = batch.reward
     pi_old = torch_dist.Normal(*torch.split(batch.logits, dim=-1, split_size_or_sections=1))
     rho_tm1 = (policy.log_prob(batch.action) - pi_old.log_prob(batch.action)).sum(-1).exp()
     adv, v_target, q_target = batched_vtrace(v_tm1.detach(), v_t, r_t, not_done * config.gamma,
                                              rho_tm1.detach())
-    v_target = v_target # / v_target.max()
-    q_target = q_target # / q_target.max()
     td = 0.5 * (mask * (v_target - v_tm1).pow(2)).sum(0).mean()
     q_learning = 0.5 * (mask * (q_target - q_tm1).pow(2)).sum(0).mean()
     td_loss = 0.5 * (td + q_learning)
@@ -52,11 +50,14 @@ def eval_pi(model, batch):
     policy = model.actor(batch.state)
     pi_old = torch_dist.Normal(*torch.split(batch.logits, dim=-1, split_size_or_sections=1))
     entropy = (policy.entropy().sum(dim=-1) * mask).sum(0).mean()
-    pi_grad = model.q(batch.state, policy.loc).sum(0).mean()
+    pi_grad = model.q(batch.state, policy.rsample()).sum(0).mean()
     kl = torch_dist.kl_divergence(policy, pi_old).sum(0).mean()
-    pi_loss = - pi_grad + 0.01 * kl
+    # kl = (policy.loc - pi_old.loc).abs().sum(dim=-1).sum(0).mean()
+    pi_loss = - pi_grad  # + 0.01 * kl
+    scale = policy.variance.mean()
+    loc = policy.mean.mean()
     info = tree.map_structure(lambda x: x.detach().numpy(),
-                              {"pi_loss": pi_grad, "kl": kl, "entropy": entropy})
+                              {"pi_loss": pi_grad, "kl": kl, "entropy": entropy, "loc": loc, "scale": scale})
     return pi_loss, info
 
 
@@ -165,9 +166,12 @@ def train_loop(data_queue, model, model_queues, optimizer, writer_queue, frame_c
             batch = collect_transitions(data_queue, config.batch_size)
         logger.info(f"{global_step} in dt:{t():.2f}")
         loss, loss_info = evaluate_loss(model, batch)  # noqa
-        td_info = update_params(critic_opt, model, loss)
+        td_info = update_params(critic_opt, model.q, loss)
+        # for _ in range(config.pi_epochs):
         loss, pi_info = eval_pi(model, batch)  # noqa
-        opt_info = update_params(pi_opt, model, loss)
+        opt_info = update_params(pi_opt, model.actor, loss)
+        if torch.abs(loss) > 1e3:
+            break
         for proc_idx, model_queue in model_queues.items():
             model_queue.put(model.actor.state_dict())
         writer_queue.put((0, {**opt_info, **loss_info, **td_info, **pi_info}))
