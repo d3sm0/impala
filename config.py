@@ -1,6 +1,7 @@
 import torch
+import sys
 
-DEBUG = True  # sys.gettrace() is not None
+DEBUG = sys.gettrace() is not None
 # env_id = "CartPole-v0"
 env_id = "Pendulum-v0"
 should_render = False
@@ -23,6 +24,7 @@ actor_epochs = 5
 gamma = 0.99
 save_every = 100
 grad_clip = 40.
+pi_epochs = 5
 
 seed = 33
 h_dim = 64
