@@ -35,8 +35,6 @@ def evaluate_loss(model, batch):
     rho_tm1 = (policy.log_prob(batch.action) - pi_old.log_prob(batch.action)).sum(-1).exp()
     adv, v_target, q_target = batched_vtrace(v_tm1.detach(), v_t, r_t, not_done * config.gamma,
                                              rho_tm1.detach())
-    v_target = v_target # / v_target.max()
-    q_target = q_target # / q_target.max()
     td = 0.5 * (mask * (v_target - v_tm1).pow(2)).sum(0).mean()
     q_learning = 0.5 * (mask * (q_target - q_tm1).pow(2)).sum(0).mean()
     td_loss = 0.5 * (td + q_learning)
