@@ -12,6 +12,7 @@ import tree
 from torch._vmap_internals import vmap
 
 import config
+import lqr
 import models
 import specs
 import utils
@@ -46,7 +47,8 @@ def evaluate_loss(model, batch):
 
 
 def run_learner(model_queue, data_queue, writer_queue, frame_counter, proc_id):
-    env = utils.GymWrapper(gym.make(config.env_id))
+    # gym.make(config.env_id)
+    env = utils.GymWrapper(lqr.Lqg())
     env.unwrapped.seed(config.seed)
     utils.set_seed(config.seed)
     model = models.Actor(obs_dim=env.observation_space.shape[0],
@@ -150,6 +152,8 @@ def train_loop(data_queue, model, model_queues, optimizer, writer_queue, frame_c
         for _ in range(config.actor_epochs):
             loss, loss_info = evaluate_loss(model, batch)  # noqa
             opt_info = update_params(optimizer, model, loss)
+        if torch.abs(loss) > 1e3:
+            break
         for proc_idx, model_queue in model_queues.items():
             model_queue.put(model.actor.state_dict())
         writer_queue.put((0, {**opt_info, **loss_info}))
@@ -168,7 +172,8 @@ def main():
         extra_modules=["python/3.7", "cuda/11.1/cudnn/8.0"],
     )
 
-    env = gym.make(config.env_id)
+    # env = gym.make(config.env_id)
+    env = lqr.Lqg()
     model = models.Agent(obs_dim=env.observation_space.shape[0], action_dim=env.action_space.shape[0],
                          h_dim=config.h_dim)
     optimizer = torch.optim.RMSprop(
