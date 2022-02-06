@@ -12,6 +12,7 @@ import tree
 from torch._vmap_internals import vmap
 
 import config
+import lqr
 import models
 import specs
 import utils
@@ -27,14 +28,14 @@ def evaluate_loss(model, batch):
     r_t = batch.reward
     not_done = (1 - batch.done)
     mask = torch.roll(not_done, 1, dims=(0,))
-    pi_old = torch_dist.Categorical(logits=batch.logits)
-    rho_tm1 = (policy.log_prob(batch.action) - pi_old.log_prob(batch.action)).exp()
+    pi_old = torch_dist.Normal(*torch.split(batch.logits, split_size_or_sections=1, dim=-1))
+    rho_tm1 = (policy.log_prob(batch.action) - pi_old.log_prob(batch.action)).sum(dim=-1).exp()
     adv, v_target, _ = vmap(rlego.vtrace_td_error_and_advantage)(v_tm1.detach(), v_t, r_t, not_done * config.gamma,
                                                                  rho_tm1.detach())
     # adv = torch.clamp(adv, -1, 1)
     pi_grad = - (rho_tm1 * adv.detach() * (1 - config.gamma) * mask).sum(1).mean()
     td = 0.5 * (mask * (v_target * (1 - config.gamma) - v_tm1).pow(2)).sum(1).mean()
-    kl = (torch_dist.kl_divergence(policy, pi_old) * mask).sum(1).mean()
+    kl = (torch_dist.kl_divergence(policy, pi_old).sum(dim=-1) * mask).sum(1).mean()
     entropy = (policy.entropy() * mask).sum(1).mean()
     loss = pi_grad + td + 0.001 * kl
     assert torch.isfinite(loss)
@@ -46,7 +47,7 @@ def run_learner(model_queue, data_queue, writer_queue, frame_counter, proc_id):
     env = utils.GymWrapper(gym.make(config.env_id))
     env.unwrapped.seed(config.seed)
     utils.set_seed(config.seed)
-    model = models.Agent(obs_dim=env.observation_space.shape[0], action_dim=env.action_space.n, h_dim=config.h_dim)
+    model = models.Actor(obs_dim=env.observation_space.shape[0], action_dim=env.action_space.shape[0], h_dim=config.h_dim)
     state, *_ = env.reset()
     trajectory = collections.deque(maxlen=config.trajectory_len + 1)
     for step in itertools.count():
@@ -68,10 +69,10 @@ def run_learner(model_queue, data_queue, writer_queue, frame_counter, proc_id):
 @torch.no_grad()
 def _sample_trajectory(state, env, model, trajectory, writer_queue, trajectory_len, proc_id):
     for t in range(trajectory_len):
-        pi = model.actor(state)
+        pi = model(state)
         action = pi.sample()
         next_state, reward, done, info = env.step(action)
-        transition = (state, action, reward, next_state, done, pi.logits)
+        transition = (state, action, reward, next_state, done, torch.cat([pi.loc, pi.scale]))
         trajectory.append(transition)
         state = next_state
         if "step" in info.keys():
@@ -114,7 +115,7 @@ def train(model, optimizer, writer):
     actor_procs = []
     for proc_idx in range(config.num_actors):
         model_queue = torch.multiprocessing.SimpleQueue()
-        model_queue.put(model.state_dict())
+        model_queue.put(model.actor.state_dict())
         p = multiprocessing.Process(target=run_learner,
                                     args=(model_queue, data_queue, writer_queue, frame_counter, proc_idx))
         model_queues[proc_idx] = model_queue
@@ -145,7 +146,7 @@ def train_loop(data_queue, model, model_queues, optimizer, writer_queue, frame_c
         loss, loss_info = evaluate_loss(model, batch)  # noqa
         opt_info = update_params(optimizer, model, loss)
         for proc_idx, model_queue in model_queues.items():
-            model_queue.put(model.state_dict())
+            model_queue.put(model.actor.state_dict())
         writer_queue.put((0, {**opt_info, **loss_info}))
         if frame_counter.value >= config.max_steps:
             break
@@ -162,13 +163,12 @@ def main():
         extra_modules=["python/3.7", "cuda/11.1/cudnn/8.0"],
     )
 
-    env = gym.make(config.env_id)
-    model = models.Agent(obs_dim=env.observation_space.shape[0], action_dim=env.action_space.n, h_dim=config.h_dim)
+    # env = gym.make(config.env_id)
+    env = lqr.Lqg()
+    model = models.Agent(obs_dim=env.observation_space.shape[0], action_dim=env.action_space.shape[0], h_dim=config.h_dim)
     optimizer = torch.optim.Adam(
-        [{"params": model.parameters(), "lr": config.critic_lr}]
-        # [{"params": model.actor.parameters(), "lr": config.actor_lr},
-        # {"params": model.critic.parameters(), "lr": config.critic_lr}],
-        ## momentum=0., eps=0.01
+        [{"params": model.actor.parameters(), "lr": config.actor_lr},
+         {"params": model.critic.parameters(), "lr": config.critic_lr}],
     )
     del env
 
