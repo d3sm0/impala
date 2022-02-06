@@ -4,7 +4,6 @@ import multiprocessing
 import threading
 
 import experiment_buddy as buddy
-import gym
 import rlego
 import torch
 import torch.distributions as torch_dist
@@ -26,20 +25,24 @@ def evaluate_loss(model, batch):
     with torch.no_grad():
         v_t = model.critic(batch.next_state)
     r_t = batch.reward
+    r_t /= r_t.std()
     not_done = (1 - batch.done)
     mask = torch.roll(not_done, 1, dims=(0,))
     pi_old = torch_dist.Normal(*torch.split(batch.logits, split_size_or_sections=1, dim=-1))
     rho_tm1 = (policy.log_prob(batch.action) - pi_old.log_prob(batch.action)).sum(dim=-1).exp()
     adv, v_target, _ = vmap(rlego.vtrace_td_error_and_advantage)(v_tm1.detach(), v_t, r_t, not_done * config.gamma,
                                                                  rho_tm1.detach())
+    adv = (adv - adv.mean()) / (adv.std())
+    adv = torch.clamp(adv, -1., 1.)
     pi_grad = - (rho_tm1 * adv.detach() * mask).sum(0).mean()
     td = 0.5 * (mask * (v_target - v_tm1).pow(2)).sum(0).mean()
     kl = (torch_dist.kl_divergence(policy, pi_old).sum(dim=-1) * mask).sum(0).mean()
-    entropy = (policy.entropy() * mask).sum(0).mean()
-    loss = pi_grad + 0.5 * td + 0.001 * kl
+    entropy = (policy.entropy().sum(dim=-1) * mask).mean()
+    loss = pi_grad + 0.5 * td + kl
     assert torch.isfinite(loss)
     return loss, tree.map_structure(lambda x: x.detach().numpy(),
-                                    {"pi_loss": pi_grad, "td": td, "rho": rho_tm1.mean(), "kl": kl, "entropy": entropy})
+                                    {"pi_loss": pi_grad, "td": td, "rho": rho_tm1.mean(), "kl": kl, "entropy": entropy,
+                                     "scale": policy.scale.mean(), "loc": policy.mean.mean()})
 
 
 def run_learner(model_queue, data_queue, writer_queue, frame_counter, proc_id):
@@ -48,7 +51,8 @@ def run_learner(model_queue, data_queue, writer_queue, frame_counter, proc_id):
     env = utils.GymWrapper(env)
     env.unwrapped.seed(config.seed)
     utils.set_seed(config.seed)
-    model = models.Actor(obs_dim=env.observation_space.shape[0], action_dim=env.action_space.shape[0], h_dim=config.h_dim)
+    model = models.Actor(obs_dim=env.observation_space.shape[0], action_dim=env.action_space.shape[0],
+                         h_dim=config.h_dim)
     state, *_ = env.reset()
     trajectory = collections.deque(maxlen=config.trajectory_len + 1)
     for step in itertools.count():
@@ -166,7 +170,8 @@ def main():
 
     # env = gym.make(config.env_id)
     env = lqr.Lqg()
-    model = models.Agent(obs_dim=env.observation_space.shape[0], action_dim=env.action_space.shape[0], h_dim=config.h_dim)
+    model = models.Agent(obs_dim=env.observation_space.shape[0], action_dim=env.action_space.shape[0],
+                         h_dim=config.h_dim)
     optimizer = torch.optim.RMSprop(
         [{"params": model.actor.parameters(), "lr": config.actor_lr},
          {"params": model.critic.parameters(), "lr": config.critic_lr}],
