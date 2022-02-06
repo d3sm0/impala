@@ -22,6 +22,7 @@ logger = utils.get_logger("main")
 def evaluate_loss(model, batch):
     policy = model.actor(batch.state)
     v_tm1 = model.critic(batch.state)
+    q_tm1 = model.q(batch.state, batch.action)
     with torch.no_grad():
         v_t = model.critic(batch.next_state)
     r_t = batch.reward
@@ -30,15 +31,17 @@ def evaluate_loss(model, batch):
     mask = torch.roll(not_done, 1, dims=(0,))
     pi_old = torch_dist.Normal(*torch.split(batch.logits, split_size_or_sections=1, dim=-1))
     rho_tm1 = (policy.log_prob(batch.action) - pi_old.log_prob(batch.action)).sum(dim=-1).exp()
-    adv, v_target, _ = vmap(rlego.vtrace_td_error_and_advantage)(v_tm1.detach(), v_t, r_t, not_done * config.gamma,
-                                                                 rho_tm1.detach())
-    adv = (adv - adv.mean()) / (adv.std())
-    adv = torch.clamp(adv, -1., 1.)
-    pi_grad = - (rho_tm1 * adv.detach() * mask).sum(0).mean()
+    adv, v_target, q_target = vmap(rlego.vtrace_td_error_and_advantage)(v_tm1.detach(), v_t, r_t,
+                                                                        not_done * config.gamma, rho_tm1.detach())
+    # adv = (adv - adv.mean()) / (adv.std())
+    # adv = torch.clamp(adv, -1., 1.)
+    # pi_grad = - (rho_tm1 * adv.detach() * mask).sum(0).mean()
+    pi_grad = (-model.q(batch.state, policy.rsample())).sum(0).mean()
     td = 0.5 * (mask * (v_target - v_tm1).pow(2)).sum(0).mean()
+    q_loss = 0.5 * (mask * (q_target - q_tm1).pow(2)).sum(0).mean()
     kl = (torch_dist.kl_divergence(policy, pi_old).sum(dim=-1) * mask).sum(0).mean()
     entropy = (policy.entropy().sum(dim=-1) * mask).mean()
-    loss = pi_grad + 0.5 * td + kl
+    loss = pi_grad + 0.5 * (td + q_loss)  # + kl
     assert torch.isfinite(loss)
     return loss, tree.map_structure(lambda x: x.detach().numpy(),
                                     {"pi_loss": pi_grad, "td": td, "rho": rho_tm1.mean(), "kl": kl, "entropy": entropy,
