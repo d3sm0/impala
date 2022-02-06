@@ -12,6 +12,7 @@ import tree
 from torch._vmap_internals import vmap
 
 import config
+import lqr
 import models
 import specs
 import utils
@@ -27,13 +28,13 @@ def evaluate_loss(model, batch):
     r_t = batch.reward
     not_done = (1 - batch.done)
     mask = torch.roll(not_done, 1, dims=(0,))
-    pi_old = torch_dist.Categorical(logits=batch.logits)
-    rho_tm1 = (policy.log_prob(batch.action) - pi_old.log_prob(batch.action)).exp()
+    pi_old = torch_dist.Normal(*torch.split(batch.logits, split_size_or_sections=1, dim=-1))
+    rho_tm1 = (policy.log_prob(batch.action) - pi_old.log_prob(batch.action)).sum(dim=-1).exp()
     adv, v_target, _ = vmap(rlego.vtrace_td_error_and_advantage)(v_tm1.detach(), v_t, r_t, not_done * config.gamma,
                                                                  rho_tm1.detach())
     pi_grad = - (rho_tm1 * adv.detach() * mask).sum(0).mean()
     td = 0.5 * (mask * (v_target - v_tm1).pow(2)).sum(0).mean()
-    kl = (torch_dist.kl_divergence(policy, pi_old) * mask).sum(0).mean()
+    kl = (torch_dist.kl_divergence(policy, pi_old).sum(dim=-1) * mask).sum(0).mean()
     entropy = (policy.entropy() * mask).sum(0).mean()
     loss = pi_grad + 0.5 * td + 0.001 * kl
     assert torch.isfinite(loss)
@@ -42,10 +43,12 @@ def evaluate_loss(model, batch):
 
 
 def run_learner(model_queue, data_queue, writer_queue, frame_counter, proc_id):
-    env = utils.GymWrapper(gym.make(config.env_id))
+    # gym.make(config.env_id)
+    env = lqr.Lqg()
+    env = utils.GymWrapper(env)
     env.unwrapped.seed(config.seed)
     utils.set_seed(config.seed)
-    model = models.Actor(obs_dim=env.observation_space.shape[0], action_dim=env.action_space.n, h_dim=config.h_dim)
+    model = models.Actor(obs_dim=env.observation_space.shape[0], action_dim=env.action_space.shape[0], h_dim=config.h_dim)
     state, *_ = env.reset()
     trajectory = collections.deque(maxlen=config.trajectory_len + 1)
     for step in itertools.count():
@@ -70,7 +73,7 @@ def _sample_trajectory(state, env, model, trajectory, writer_queue, trajectory_l
         pi = model(state)
         action = pi.sample()
         next_state, reward, done, info = env.step(action)
-        transition = (state, action, reward, next_state, done, pi.logits)
+        transition = (state, action, reward, next_state, done, torch.cat([pi.loc, pi.scale]))
         trajectory.append(transition)
         state = next_state
         if "step" in info.keys():
@@ -161,8 +164,9 @@ def main():
         extra_modules=["python/3.7", "cuda/11.1/cudnn/8.0"],
     )
 
-    env = gym.make(config.env_id)
-    model = models.Agent(obs_dim=env.observation_space.shape[0], action_dim=env.action_space.n, h_dim=config.h_dim)
+    # env = gym.make(config.env_id)
+    env = lqr.Lqg()
+    model = models.Agent(obs_dim=env.observation_space.shape[0], action_dim=env.action_space.shape[0], h_dim=config.h_dim)
     optimizer = torch.optim.RMSprop(
         [{"params": model.actor.parameters(), "lr": config.actor_lr},
          {"params": model.critic.parameters(), "lr": config.critic_lr}],
