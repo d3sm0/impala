@@ -3,7 +3,7 @@ import sys
 import torch
 
 DEBUG = sys.gettrace() is not None
-env_id = "lqr"
+env_id = "Pendulum-v1"
 should_render = False
 deploy = False
 proc_num = 1
@@ -25,6 +25,6 @@ save_every = 100
 grad_clip = 40.
 
 seed = 33
-h_dim = 6
+h_dim = 32
 
 device = torch.device("cpu")

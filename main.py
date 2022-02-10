@@ -4,6 +4,7 @@ import multiprocessing
 import threading
 
 import experiment_buddy as buddy
+import gym
 import rlego
 import torch
 import torch.distributions as torch_dist
@@ -68,8 +69,8 @@ def w_gaussian(pi, pi_k):
 
 
 def run_learner(model_queue, data_queue, writer_queue, frame_counter, proc_id):
-    # gym.make(config.env_id)
-    env = lqr.Lqg()
+    env = gym.make(config.env_id)
+    # env = lqr.Lqg()
     env = utils.GymWrapper(env)
     env.unwrapped.seed(config.seed)
     utils.set_seed(config.seed)
@@ -192,8 +193,8 @@ def main():
         extra_modules=["python/3.7", "cuda/11.1/cudnn/8.0"],
     )
 
-    # env = gym.make(config.env_id)
-    env = lqr.Lqg()
+    env = gym.make(config.env_id)
+    # env = lqr.Lqg()
     model = models.Agent(obs_dim=env.observation_space.shape[0], action_dim=env.action_space.shape[0],
                          h_dim=config.h_dim)
 

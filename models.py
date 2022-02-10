@@ -14,6 +14,8 @@ class QFunction(nn.Module):
             nn.SiLU(),
             nn.Linear(h_dim, h_dim),
             nn.SiLU(),
+            nn.Linear(h_dim, h_dim),
+            nn.SiLU(),
         )
         self._add_action = nn.Sequential(nn.Linear(h_dim + action_dim, h_dim), nn.SiLU())
         self._out = nn.Linear(h_dim, 1)
@@ -31,6 +33,8 @@ class VFunction(nn.Module):
 
         self._critic = nn.Sequential(
             nn.Linear(obs_dim, h_dim),
+            nn.SiLU(),
+            nn.Linear(h_dim, h_dim),
             nn.SiLU(),
             nn.Linear(h_dim, h_dim),
             nn.SiLU(),
@@ -67,6 +71,8 @@ class Actor(nn.Module):
         super().__init__()
         self.actor = nn.Sequential(
             nn.Linear(obs_dim, h_dim),
+            nn.SiLU(),
+            nn.Linear(h_dim, h_dim),
             nn.SiLU(),
             nn.Linear(h_dim, h_dim),
             nn.SiLU(),
