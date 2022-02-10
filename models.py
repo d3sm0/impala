@@ -11,13 +11,11 @@ class QFunction(nn.Module):
 
         self._critic = nn.Sequential(
             nn.Linear(obs_dim, h_dim),
-            # nn.Tanh(),
-            # nn.Linear(h_dim, h_dim),
-            # nn.ReLU(),
-            # nn.Linear(h_dim, h_dim),
-            # nn.ReLU(),
+            nn.SiLU(),
+            nn.Linear(h_dim, h_dim),
+            nn.SiLU(),
         )
-        self._add_action = nn.Sequential(nn.Linear(h_dim + action_dim, h_dim), nn.ReLU())
+        self._add_action = nn.Sequential(nn.Linear(h_dim + action_dim, h_dim), nn.SiLU())
         self._out = nn.Linear(h_dim, 1)
 
     def forward(self, state, action):
@@ -33,11 +31,9 @@ class VFunction(nn.Module):
 
         self._critic = nn.Sequential(
             nn.Linear(obs_dim, h_dim),
-            # nn.Tanh(),
-            # nn.Linear(h_dim, h_dim),
-            # nn.ReLU(),
-            # nn.Linear(h_dim, h_dim),
-            # nn.ReLU(),
+            nn.SiLU(),
+            nn.Linear(h_dim, h_dim),
+            nn.SiLU(),
             nn.Linear(h_dim, 1)
         )
 
@@ -45,16 +41,35 @@ class VFunction(nn.Module):
         return self._critic(state).squeeze(-1)
 
 
+class Q_and_V(nn.Module):
+    def __init__(self, obs_dim, action_dim, h_dim=100):
+        super().__init__()
+
+        self._critic = nn.Sequential(
+            nn.Linear(obs_dim, h_dim),
+            nn.SiLU(),
+            nn.Linear(h_dim, h_dim),
+            nn.SiLU(),
+        )
+        self._add_action = nn.Sequential(nn.Linear(h_dim + action_dim, h_dim), nn.SiLU(), nn.Linear(h_dim, 1))
+        self._out = nn.Linear(h_dim, 1)
+
+    def forward(self, state, action):
+        h = self._critic(state)
+        state_and_action = torch.cat([h, action], dim=-1)
+        q = self._add_action(state_and_action)
+        v = self._out(h).squeeze(-1)
+        return q, v
+
+
 class Actor(nn.Module):
     def __init__(self, obs_dim, action_dim, h_dim=100):
         super().__init__()
         self.actor = nn.Sequential(
             nn.Linear(obs_dim, h_dim),
-            # nn.Tanh(),
-            # nn.Linear(h_dim, h_dim),
-            # nn.ReLU(),
-            # nn.Linear(h_dim, h_dim),
-            # nn.ReLU(),
+            nn.SiLU(),
+            nn.Linear(h_dim, h_dim),
+            nn.SiLU(),
             rlego.GaussianPolicy(h_dim, action_dim))
 
     def forward(self, s):

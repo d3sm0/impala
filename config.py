@@ -25,6 +25,6 @@ save_every = 100
 grad_clip = 40.
 
 seed = 33
-h_dim = 64
+h_dim = 6
 
 device = torch.device("cpu")
