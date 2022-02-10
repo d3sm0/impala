@@ -65,11 +65,11 @@ class Body(nn.Module):
         super().__init__()
         self.body = nn.Sequential(
             nn.Linear(obs_dim, h_dim),
-            nn.ReLU(),
+            nn.SiLU(),
             nn.Linear(h_dim, h_dim),
-            nn.ReLU(),
+            nn.SiLU(),
             nn.Linear(h_dim, h_dim),
-            nn.ReLU())
+            nn.SiLU())
 
     def forward(self, s):
         out = self.body(s)
@@ -83,8 +83,10 @@ class Agent(nn.Module):
         super().__init__()
         self._num_actions = action_dim
         self.body = Body(obs_dim, h_dim)
-        self.actor = nn.Sequential(self.body, rlego.SoftmaxPolicy(h_dim, action_dim))
+        self.actor = nn.Sequential(self.body, rlego.GaussianPolicy(h_dim, action_dim))
         self.critic = nn.Sequential(self.body, nn.Linear(h_dim, 1), nn.Flatten(start_dim=1))
+        # self.actor = Actor(obs_dim, action_dim, h_dim)
+        # self.critic = VFunction(obs_dim, h_dim)
 
     def forward(self, observation) -> Tuple[torch.Tensor, torch.Tensor]:
         """Process a batch of observations."""

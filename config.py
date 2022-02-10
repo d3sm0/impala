@@ -3,7 +3,7 @@ import sys
 import torch
 
 DEBUG = sys.gettrace() is not None
-env_id = "lqr"
+env_id = "Pendulum-v1"
 should_render = False
 deploy = False
 proc_num = 1
@@ -17,7 +17,7 @@ if deploy and not DEBUG:
 max_steps = int(1e6)
 actor_lr = 1e-3
 critic_lr = 1e-3
-trajectory_len = 20
+trajectory_len = 5
 num_actors = 1 if DEBUG else 5
 batch_size = 32
 gamma = 0.99
@@ -25,6 +25,6 @@ save_every = 100
 grad_clip = 40.
 
 seed = 33
-h_dim = 64
+h_dim = 32
 
 device = torch.device("cpu")
