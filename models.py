@@ -53,10 +53,26 @@ class Actor(nn.Module):
             nn.ReLU(),
             nn.Linear(h_dim, h_dim),
             nn.ReLU(),
-            rlego.SoftmaxPolicy(h_dim, action_dim))
+            rlego.GaussianPolicy(h_dim, action_dim))
 
     def forward(self, s):
         out = self.actor(s)
+        return out
+
+
+class Body(nn.Module):
+    def __init__(self, obs_dim, h_dim=100):
+        super().__init__()
+        self.body = nn.Sequential(
+            nn.Linear(obs_dim, h_dim),
+            nn.SiLU(),
+            nn.Linear(h_dim, h_dim),
+            nn.SiLU(),
+            nn.Linear(h_dim, h_dim),
+            nn.SiLU())
+
+    def forward(self, s):
+        out = self.body(s)
         return out
 
 
@@ -66,8 +82,11 @@ class Agent(nn.Module):
     def __init__(self, obs_dim: int, action_dim: int, h_dim: int = 32):
         super().__init__()
         self._num_actions = action_dim
-        self.actor = Actor(obs_dim, action_dim, h_dim)
-        self.critic = VFunction(obs_dim, h_dim)
+        self.body = Body(obs_dim, h_dim)
+        self.actor = nn.Sequential(self.body, rlego.GaussianPolicy(h_dim, action_dim))
+        self.critic = nn.Sequential(self.body, nn.Linear(h_dim, 1), nn.Flatten(start_dim=1))
+        # self.actor = Actor(obs_dim, action_dim, h_dim)
+        # self.critic = VFunction(obs_dim, h_dim)
 
     def forward(self, observation) -> Tuple[torch.Tensor, torch.Tensor]:
         """Process a batch of observations."""

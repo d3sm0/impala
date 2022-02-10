@@ -27,25 +27,29 @@ def evaluate_loss(model, batch):
     r_t = batch.reward
     not_done = (1 - batch.done)
     mask = torch.roll(not_done, 1, dims=(0,))
-    pi_old = torch_dist.Categorical(logits=batch.logits)
-    rho_tm1 = (policy.log_prob(batch.action) - pi_old.log_prob(batch.action)).exp()
+    pi_old = torch_dist.Normal(*torch.split(batch.logits, split_size_or_sections=1, dim=-1))
+    rho_tm1 = (policy.log_prob(batch.action) - pi_old.log_prob(batch.action)).sum(dim=-1).exp()
     adv, v_target, _ = vmap(rlego.vtrace_td_error_and_advantage)(v_tm1.detach(), v_t, r_t, not_done * config.gamma,
                                                                  rho_tm1.detach())
-    pi_grad = - (rho_tm1 * adv.detach() * mask).sum(0).mean()
-    td = 0.5 * (mask * (v_target - v_tm1).pow(2)).sum(0).mean()
-    kl = (torch_dist.kl_divergence(policy, pi_old) * mask).sum(0).mean()
-    entropy = (policy.entropy() * mask).sum(0).mean()
-    loss = pi_grad + 0.5 * td + 0.001 * kl
+
+    pi_grad = - (rho_tm1 * adv.detach() * mask).sum(1).mean()
+    td = 0.5 * (mask * (v_target - v_tm1).pow(2)).sum(1).mean()
+    kl = (torch_dist.kl_divergence(policy, pi_old).sum(dim=-1) * mask).sum(1).mean()
+    entropy = (policy.entropy().sum(dim=-1) * mask).mean()
+    loss = pi_grad + td + kl
     assert torch.isfinite(loss)
     return loss, tree.map_structure(lambda x: x.detach().numpy(),
-                                    {"pi_loss": pi_grad, "td": td, "rho": rho_tm1.mean(), "kl": kl, "entropy": entropy})
+                                    {"pi_loss": pi_grad, "td": td, "rho": rho_tm1.mean(), "kl": kl, "entropy": entropy,
+                                     "scale": policy.scale.mean(), "loc": policy.mean.mean()})
 
 
 def run_learner(model_queue, data_queue, writer_queue, frame_counter, proc_id):
-    env = utils.GymWrapper(gym.make(config.env_id))
+    env = gym.make(config.env_id)
+    env = utils.GymWrapper(env)
     env.unwrapped.seed(config.seed)
     utils.set_seed(config.seed)
-    model = models.Actor(obs_dim=env.observation_space.shape[0], action_dim=env.action_space.n, h_dim=config.h_dim)
+    model = models.Agent(obs_dim=env.observation_space.shape[0], action_dim=env.action_space.shape[0],
+                         h_dim=config.h_dim)
     state, *_ = env.reset()
     trajectory = collections.deque(maxlen=config.trajectory_len + 1)
     for step in itertools.count():
@@ -55,22 +59,23 @@ def run_learner(model_queue, data_queue, writer_queue, frame_counter, proc_id):
             if state_dict is None:
                 break
             else:
-                model.load_state_dict(state_dict)
-        if step % 100 == 0:
-            logger.info(f"Policy update at {frame_counter.value}")
+                with utils.timer() as t:
+                    model.actor.load_state_dict(state_dict)
+                logger.info(
+                    f"Update Policy {proc_id}. F:{frame_counter.value}, steps:{frame_counter.value}, dt {t():.2f}.")
         state = _sample_trajectory(state, env, model, trajectory, writer_queue, trajectory_len, proc_id)
         with threading.Lock():
             frame_counter.value = frame_counter.value + trajectory_len
-        data_queue.put(tree.map_structure(lambda *x: torch.stack(x), *trajectory))
+        data_queue.put(tree.map_structure(lambda *x: torch.stack(x).share_memory_(), *trajectory))
 
 
 @torch.no_grad()
 def _sample_trajectory(state, env, model, trajectory, writer_queue, trajectory_len, proc_id):
     for t in range(trajectory_len):
-        pi = model(state)
+        pi = model.actor(state)
         action = pi.sample()
         next_state, reward, done, info = env.step(action)
-        transition = (state, action, reward, next_state, done, pi.logits)
+        transition = (state, action, reward, next_state, done, torch.cat([pi.loc, pi.scale]))
         trajectory.append(transition)
         state = next_state
         if "step" in info.keys():
@@ -140,8 +145,9 @@ def train_loop(data_queue, model, model_queues, optimizer, writer_queue, frame_c
     for global_step in itertools.count():
         with utils.timer() as t:
             batch = collect_transitions(data_queue, config.batch_size)
-        logger.info(f"{global_step} in dt:{t():.2f}")
         loss, loss_info = evaluate_loss(model, batch)  # noqa
+        if global_step % 100 == 0:
+            logger.info(f"Frames: {frame_counter.value}. step: {global_step}. dt:{t():.2f}")
         opt_info = update_params(optimizer, model, loss)
         for proc_idx, model_queue in model_queues.items():
             model_queue.put(model.actor.state_dict())
@@ -162,11 +168,10 @@ def main():
     )
 
     env = gym.make(config.env_id)
-    model = models.Agent(obs_dim=env.observation_space.shape[0], action_dim=env.action_space.n, h_dim=config.h_dim)
-    optimizer = torch.optim.RMSprop(
-        [{"params": model.actor.parameters(), "lr": config.actor_lr},
-         {"params": model.critic.parameters(), "lr": config.critic_lr}],
-        momentum=0., eps=0.01)
+    model = models.Agent(obs_dim=env.observation_space.shape[0], action_dim=env.action_space.shape[0],
+                         h_dim=config.h_dim)
+    optimizer = torch.optim.Adam([{"params": model.parameters(),
+                                   "lr": config.actor_lr}])
     del env
 
     train(model, optimizer, writer)
