@@ -5,7 +5,7 @@ import torch
 DEBUG = sys.gettrace() is not None
 env_id = "Pendulum-v1"
 should_render = False
-deploy = False
+deploy = True
 proc_num = 1
 host = ""
 sweep_yaml = ""

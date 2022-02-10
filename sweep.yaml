@@ -8,10 +8,10 @@ parameters:
     distribution: int_uniform
     min: 5
     max: 20
-  actor_lr:
-    distribution: log_uniform
-    max: -5
-    min: -8
+  batch_size:
+    distribution: int_uniform
+    min: 32
+    max: 64
   critic_lr:
     distribution: log_uniform
     max: -3
