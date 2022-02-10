@@ -15,9 +15,9 @@ if deploy and not DEBUG:
     sweep_yaml = "sweep.yaml"
 
 max_steps = int(1e6)
-actor_lr = 8e-4
-critic_lr = 1e-2
-trajectory_len = 5
+actor_lr = 1e-3
+critic_lr = 1e-3
+trajectory_len = 20
 num_actors = 1 if DEBUG else 5
 batch_size = 32
 actor_epochs = 5
