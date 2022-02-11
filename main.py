@@ -32,8 +32,8 @@ def evaluate_loss(model, batch):
     adv, v_target, _ = vmap(rlego.vtrace_td_error_and_advantage)(v_tm1.detach(), v_t, r_t, not_done * config.gamma,
                                                                  rho_tm1.detach())
 
-    pi_grad = - (rho_tm1 * adv.detach() * mask).sum(1).mean()
-    td = 0.5 * (mask * (v_target - v_tm1).pow(2)).sum(1).mean()
+    pi_grad = - (rho_tm1 * adv.detach() * (1 - config.gamma) * mask).sum(1).mean()
+    td = 0.5 * (mask * (v_target * (1 - config.gamma) - v_tm1).pow(2)).sum(1).mean()
     kl = (torch_dist.kl_divergence(policy, pi_old).sum(dim=-1) * mask).sum(1).mean()
     entropy = (policy.entropy().sum(dim=-1) * mask).mean()
     loss = pi_grad + td + kl
