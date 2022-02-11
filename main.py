@@ -4,11 +4,11 @@ import multiprocessing
 import threading
 
 import experiment_buddy as buddy
-import gym
 import rlego
 import torch
 import torch.distributions as torch_dist
 import tree
+from brax.envs import to_torch, create_gym_env
 from torch._vmap_internals import vmap
 
 import config
@@ -39,12 +39,19 @@ def evaluate_loss(model, batch):
     loss = pi_grad + td + kl
     assert torch.isfinite(loss)
     return loss, tree.map_structure(lambda x: x.detach().numpy(),
-                                    {"pi_loss": pi_grad, "td": td, "rho": rho_tm1.mean(), "kl": kl, "entropy": entropy,
-                                     "scale": policy.scale.mean(), "loc": policy.mean.mean()})
+                                    {"critic/td": td,
+                                     "critic/adv": adv.mean(),
+                                     "actor/rho": rho_tm1.mean(),
+                                     "actor/pi_loss": pi_grad,
+                                     "actor/kl": kl,
+                                     "actor/entropy": entropy,
+                                     "actor/scale": policy.scale.mean(),
+                                     "actor/loc": policy.mean.mean()})
 
 
 def run_learner(model_queue, data_queue, writer_queue, frame_counter, proc_id):
-    env = gym.make(config.env_id)
+    env = create_gym_env(config.env_id)
+    env = to_torch.JaxToTorchWrapper(env)
     env = utils.GymWrapper(env)
     env.unwrapped.seed(config.seed)
     utils.set_seed(config.seed)
@@ -167,7 +174,8 @@ def main():
         extra_modules=["python/3.7", "cuda/11.1/cudnn/8.0"],
     )
 
-    env = gym.make(config.env_id)
+    env = create_gym_env(config.env_id)
+
     model = models.Agent(obs_dim=env.observation_space.shape[0], action_dim=env.action_space.shape[0],
                          h_dim=config.h_dim)
     optimizer = torch.optim.Adam([{"params": model.parameters(),

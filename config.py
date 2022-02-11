@@ -4,9 +4,10 @@ import torch
 
 DEBUG = sys.gettrace() is not None
 # env_id = "Pendulum-v1"
+env_id = "inverted_pendulum"
 # "LunarLanderContinuous-v2"
 # MountainCarContinuous-v0
-env_id = "MountainCarContinuous-v0"
+# env_id = "MountainCarContinuous-v0"
 # env_id = "LunarLanderContinuous-v2"
 should_render = False
 deploy = False
