@@ -49,17 +49,17 @@ class Q_and_V(nn.Module):
     def __init__(self, obs_dim, action_dim, h_dim=100):
         super().__init__()
 
-        self._critic = nn.Sequential(
+        self.body = nn.Sequential(
             nn.Linear(obs_dim, h_dim),
             nn.SiLU(),
             nn.Linear(h_dim, h_dim),
             nn.SiLU(),
         )
-        self._add_action = nn.Sequential(nn.Linear(h_dim + action_dim, h_dim), nn.SiLU(), nn.Linear(h_dim, 1))
-        self._out = nn.Linear(h_dim, 1)
+        self.q = nn.Sequential(self.body, nn.Linear(h_dim + action_dim, h_dim), nn.SiLU(), nn.Linear(h_dim, 1))
+        self.critic = nn.Sequential(nn.Linear(h_dim, 1))
 
     def forward(self, state, action):
-        h = self._critic(state)
+        h = self.body(state)
         state_and_action = torch.cat([h, action], dim=-1)
         q = self._add_action(state_and_action)
         v = self._out(h).squeeze(-1)

@@ -20,10 +20,10 @@ logger = utils.get_logger("main")
 
 
 def evaluate_critic_loss(model, batch):
-    policy = model.actor(batch.state)
     v_tm1 = model.critic(batch.state)
     q_tm1 = model.q(batch.state, batch.action)
     with torch.no_grad():
+        policy = model.actor(batch.state)
         v_t = model.critic(batch.next_state)
     r_t = batch.reward
     not_done = (1 - batch.done)
@@ -67,7 +67,6 @@ def w_gaussian(pi, pi_k):
 
 def run_learner(model_queue, data_queue, writer_queue, frame_counter, proc_id):
     env = gym.make(config.env_id)
-    # env = lqr.Lqg()
     env = utils.GymWrapper(env)
     env.unwrapped.seed(config.seed)
     utils.set_seed(config.seed)
@@ -170,9 +169,9 @@ def train_loop(data_queue, model, model_queues, critic_optimizer, actor_optimize
             batch = collect_transitions(data_queue, config.batch_size)
         if global_step % 100 == 0:
             logger.info(f"Frames: {frame_counter.value}. step: {global_step}. dt:{t():.2f}")
-        value_loss, critic_info = evaluate_critic_loss(model, batch)  # noqa
+        value_loss, critic_info = evaluate_critic_loss(model, batch)
         critic_opt_info = update_params(critic_optimizer, model, value_loss)
-        actor_loss, actor_info = evaluate_actor_loss(model, batch)  # noqa
+        actor_loss, actor_info = evaluate_actor_loss(model, batch)
         actor_opt_info = update_params(actor_optimizer, model, actor_loss)
         for proc_idx, model_queue in model_queues.items():
             model_queue.put(model.actor.state_dict())
