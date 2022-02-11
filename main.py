@@ -85,19 +85,20 @@ def run_learner(model_queue, data_queue, writer_queue, frame_counter, proc_id):
             if state_dict is None:
                 break
             else:
-                model.load_state_dict(state_dict)
-        if step % 100 == 0:
-            logger.info(f"Policy update at {frame_counter.value}")
+                with utils.timer() as t:
+                    model.actor.load_state_dict(state_dict)
+                logger.info(
+                    f"Update Policy {proc_id}. F:{frame_counter.value}, steps:{frame_counter.value}, dt {t():.2f}.")
         state = _sample_trajectory(state, env, model, trajectory, writer_queue, trajectory_len, proc_id)
         with threading.Lock():
             frame_counter.value = frame_counter.value + trajectory_len
-        data_queue.put(tree.map_structure(lambda *x: torch.stack(x), *trajectory))
+        data_queue.put(tree.map_structure(lambda *x: torch.stack(x).share_memory_(), *trajectory))
 
 
 @torch.no_grad()
 def _sample_trajectory(state, env, model, trajectory, writer_queue, trajectory_len, proc_id):
     for t in range(trajectory_len):
-        pi = model(state)
+        pi = model.actor(state)
         action = pi.sample()
         next_state, reward, done, info = env.step(action)
         transition = (state, action, reward, next_state, done, torch.cat([pi.loc, pi.scale]))
@@ -170,6 +171,10 @@ def train_loop(data_queue, model, model_queues, critic_optimizer, actor_optimize
     for global_step in itertools.count():
         with utils.timer() as t:
             batch = collect_transitions(data_queue, config.batch_size)
+        loss, loss_info = evaluate_loss(model, batch)  # noqa
+        if global_step % 100 == 0:
+            logger.info(f"Frames: {frame_counter.value}. step: {global_step}. dt:{t():.2f}")
+        opt_info = update_params(optimizer, model, loss)
         logger.info(f"{global_step} in dt:{t():.2f}")
         value_loss, critic_info = evaluate_critic_loss(model, batch)  # noqa
         critic_opt_info = update_params(critic_optimizer, model, value_loss)

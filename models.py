@@ -83,6 +83,22 @@ class Actor(nn.Module):
         return out
 
 
+class Body(nn.Module):
+    def __init__(self, obs_dim, h_dim=100):
+        super().__init__()
+        self.body = nn.Sequential(
+            nn.Linear(obs_dim, h_dim),
+            nn.SiLU(),
+            nn.Linear(h_dim, h_dim),
+            nn.SiLU(),
+            nn.Linear(h_dim, h_dim),
+            nn.SiLU())
+
+    def forward(self, s):
+        out = self.body(s)
+        return out
+
+
 class Agent(nn.Module):
     """A simple network."""
 
