@@ -33,8 +33,8 @@ def evaluate_critic_loss(model, batch):
     adv, v_target, q_target = vmap(rlego.vtrace_td_error_and_advantage)(v_tm1.detach(), v_t, r_t,
                                                                         not_done * config.gamma, rho_tm1.detach())
 
-    td = 0.5 * (mask * (v_target - v_tm1).pow(2)).sum(1).mean()
-    q_loss = 0.5 * (mask * (q_target - q_tm1).pow(2)).sum(1).mean()
+    td = 0.5 * (mask * (v_target * (1-config.gamma) - v_tm1).pow(2)).sum(1).mean()
+    q_loss = 0.5 * (mask * (q_target * (1-config.gamma) - q_tm1).pow(2)).sum(1).mean()
     return (td + q_loss), tree.map_structure(lambda x: x.detach().numpy(), {
         "td": td,
         "rho": rho_tm1.mean(),
@@ -67,8 +67,8 @@ def w_gaussian(pi, pi_k):
 
 
 def run_learner(model_queue, data_queue, writer_queue, frame_counter, proc_id):
-    env = create_gym_env(config.env_id)
-    env = to_torch.JaxToTorchWrapper(env)
+    env = create_gym_env(config.env_id, backend="cpu")
+    env = to_torch.JaxToTorchWrapper(env, device=torch.device("cpu"))
     env = utils.GymWrapper(env)
     env.unwrapped.seed(config.seed)
     utils.set_seed(config.seed)
