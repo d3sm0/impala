@@ -4,11 +4,11 @@ import multiprocessing
 import threading
 
 import experiment_buddy as buddy
-import gym
 import rlego
 import torch
 import torch.distributions as torch_dist
 import tree
+from brax.envs import to_torch, create_gym_env
 from torch._vmap_internals import vmap
 
 import config
@@ -33,8 +33,8 @@ def evaluate_critic_loss(model, batch):
     adv, v_target, q_target = vmap(rlego.vtrace_td_error_and_advantage)(v_tm1.detach(), v_t, r_t,
                                                                         not_done * config.gamma, rho_tm1.detach())
 
-    td = 0.5 * (mask * (v_target * (1 - config.gamma) - v_tm1).pow(2)).sum(1).mean()
-    q_loss = 0.5 * (mask * (q_target * (1 - config.gamma) - q_tm1).pow(2)).sum(1).mean()
+    td = 0.5 * (mask * (v_target - v_tm1).pow(2)).sum(1).mean()
+    q_loss = 0.5 * (mask * (q_target - q_tm1).pow(2)).sum(1).mean()
     return (td + q_loss), tree.map_structure(lambda x: x.detach().numpy(), {
         "td": td,
         "rho": rho_tm1.mean(),
@@ -51,13 +51,14 @@ def evaluate_actor_loss(model, batch):
     kl = (torch_dist.kl_divergence(policy, pi_old).sum(dim=-1) * mask).sum(1).mean()
     entropy = (policy.entropy().sum(dim=-1) * mask).mean()
     w = w_gaussian(policy, pi_old).sum(1).mean()
-    return pi_grad, tree.map_structure(lambda x: x.detach().numpy(),
-                                       {"pi_loss": pi_grad,
-                                        "kl": kl,
-                                        "entropy": entropy,
-                                        "scale": policy.scale.mean(), "loc": policy.mean.mean(),
-                                        "wasserstein": w,
-                                        })
+    return pi_grad + config.regularizer * kl, tree.map_structure(lambda x: x.detach().numpy(),
+                                                                 {"pi_loss": pi_grad,
+                                                                  "kl": kl,
+                                                                  "entropy": entropy,
+                                                                  "scale": policy.scale.mean(),
+                                                                  "loc": policy.mean.mean(),
+                                                                  "wasserstein": w,
+                                                                  })
 
 
 def w_gaussian(pi, pi_k):
@@ -66,7 +67,8 @@ def w_gaussian(pi, pi_k):
 
 
 def run_learner(model_queue, data_queue, writer_queue, frame_counter, proc_id):
-    env = gym.make(config.env_id)
+    env = create_gym_env(config.env_id)
+    env = to_torch.JaxToTorchWrapper(env)
     env = utils.GymWrapper(env)
     env.unwrapped.seed(config.seed)
     utils.set_seed(config.seed)
@@ -105,12 +107,12 @@ def _sample_trajectory(state, env, actor, trajectory, writer_queue, trajectory_l
     return state
 
 
-def update_params(optimizer, model, loss):
+def update_params(optimizer, model, loss, prefix):
     optimizer.zero_grad()
     loss.backward()
     grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.grad_clip)
     optimizer.step()
-    return {"grad_norm": grad_norm}
+    return {f"{prefix}/grad_norm": grad_norm}
 
 
 def collect_transitions(data_queue, batch_size):
@@ -170,9 +172,9 @@ def train_loop(data_queue, model, model_queues, critic_optimizer, actor_optimize
         if global_step % 100 == 0:
             logger.info(f"Frames: {frame_counter.value}. step: {global_step}. dt:{t():.2f}")
         value_loss, critic_info = evaluate_critic_loss(model, batch)
-        critic_opt_info = update_params(critic_optimizer, model, value_loss)
+        critic_opt_info = update_params(critic_optimizer, model, value_loss, "critic")
         actor_loss, actor_info = evaluate_actor_loss(model, batch)
-        actor_opt_info = update_params(actor_optimizer, model, actor_loss)
+        actor_opt_info = update_params(actor_optimizer, model, actor_loss, "actor")
         for proc_idx, model_queue in model_queues.items():
             model_queue.put(model.actor.state_dict())
         writer_queue.put((0, {**critic_opt_info, **actor_opt_info, **critic_info, **actor_info}))
@@ -191,8 +193,8 @@ def main():
         extra_modules=["python/3.7", "cuda/11.1/cudnn/8.0"],
     )
 
-    env = gym.make(config.env_id)
-    # env = lqr.Lqg()
+    env = create_gym_env(config.env_id)
+
     model = models.Agent(obs_dim=env.observation_space.shape[0], action_dim=env.action_space.shape[0],
                          h_dim=config.h_dim)
 
