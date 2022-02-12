@@ -20,11 +20,12 @@ logger = utils.get_logger("main")
 
 
 def evaluate_critic_loss(model, batch):
-    v_tm1 = model.critic(batch.state)
-    q_tm1 = model.q(batch.state, batch.action)
+    q_tm1, v_tm1 = model.q_and_v(batch.state, batch.action)
+    # v_tm1 = model.critic(batch.state)
+    # q_tm1 = model.q(batch.state, batch.action)
     with torch.no_grad():
         policy = model.actor(batch.state)
-        v_t = model.critic(batch.next_state)
+        _, v_t = model.q_and_v(batch.next_state, policy.loc)
     r_t = batch.reward
     not_done = (1 - batch.done)
     mask = torch.roll(not_done, 1, dims=(0,))
@@ -33,12 +34,14 @@ def evaluate_critic_loss(model, batch):
     adv, v_target, q_target = vmap(rlego.vtrace_td_error_and_advantage)(v_tm1.detach(), v_t, r_t,
                                                                         not_done * config.gamma, rho_tm1.detach())
 
-    td = 0.5 * (mask * (v_target - v_tm1).pow(2)).sum(1).mean()
-    q_loss = 0.5 * (mask * (q_target - q_tm1).pow(2)).sum(1).mean()
+    td = 0.5 * (mask * (v_target * (1 - config.gamma) - v_tm1).pow(2)).sum(1).mean()
+    l2_q = utils.l2_norm(model.q.named_parameters())
+    q_loss = 0.5 * (mask * (q_target * (1 - config.gamma) - q_tm1).pow(2)).sum(1).mean()
     return (td + q_loss), tree.map_structure(lambda x: x.detach().numpy(), {
-        "td": td,
-        "rho": rho_tm1.mean(),
-        "q_loss": q_loss
+        "critic/td": td,
+        "critic/rho": rho_tm1.mean(),
+        "critic/l2_q": l2_q,
+        "critic/q_loss": q_loss
     })
 
 
@@ -47,18 +50,19 @@ def evaluate_actor_loss(model, batch):
     not_done = (1 - batch.done)
     mask = torch.roll(not_done, 1, dims=(0,))
     policy = model.actor(batch.state)
-    pi_grad = (-model.q(batch.state, policy.rsample())).sum(1).mean()
+    q, _ = model.q_and_v(batch.state, policy.rsample((len(batch.state),)).mean(0))
+    pi_grad = (-q).sum(1).mean()
     kl = (torch_dist.kl_divergence(policy, pi_old).sum(dim=-1) * mask).sum(1).mean()
     entropy = (policy.entropy().sum(dim=-1) * mask).mean()
     w = w_gaussian(policy, pi_old).sum(1).mean()
-    return pi_grad + config.regularizer * kl, tree.map_structure(lambda x: x.detach().numpy(),
-                                                                 {"pi_loss": pi_grad,
-                                                                  "kl": kl,
-                                                                  "entropy": entropy,
-                                                                  "scale": policy.scale.mean(),
-                                                                  "loc": policy.mean.mean(),
-                                                                  "wasserstein": w,
-                                                                  })
+    return pi_grad, tree.map_structure(lambda x: x.detach().numpy(),
+                                       {"actor/pi_loss": pi_grad,
+                                        "actor/kl": kl,
+                                        "actor/entropy": entropy,
+                                        "actor/scale": policy.scale.mean(),
+                                        "actor/loc": policy.mean.mean(),
+                                        "actor/wasserstein": w,
+                                        })
 
 
 def w_gaussian(pi, pi_k):
@@ -67,11 +71,11 @@ def w_gaussian(pi, pi_k):
 
 
 def run_learner(model_queue, data_queue, writer_queue, frame_counter, proc_id):
-    env = create_gym_env(config.env_id)
-    env = to_torch.JaxToTorchWrapper(env)
+    env = create_gym_env(config.env_id, backend="cpu")
+    env = to_torch.JaxToTorchWrapper(env, device=torch.device("cpu"))
     env = utils.GymWrapper(env)
-    env.unwrapped.seed(config.seed)
-    utils.set_seed(config.seed)
+    # env.unwrapped.seed(config.seed)
+    # utils.set_seed(config.seed)
     actor = models.Actor(obs_dim=env.observation_space.shape[0], action_dim=env.action_space.shape[0],
                          h_dim=config.h_dim)
     state, *_ = env.reset()
@@ -84,13 +88,14 @@ def run_learner(model_queue, data_queue, writer_queue, frame_counter, proc_id):
                 break
             else:
                 with utils.timer() as t:
-                    actor.load_state_dict(state_dict)
+                    utils.polyak_update_from_state_dict(state_dict, actor.state_dict(), tau=config.tau)
                 logger.info(
                     f"Update Policy {proc_id}. F:{frame_counter.value}, steps:{frame_counter.value}, dt {t():.2f}.")
         state = _sample_trajectory(state, env, actor, trajectory, writer_queue, trajectory_len, proc_id)
         with threading.Lock():
             frame_counter.value = frame_counter.value + trajectory_len
         data_queue.put(tree.map_structure(lambda *x: torch.stack(x).share_memory_(), *trajectory))
+
 
 
 @torch.no_grad()
@@ -198,10 +203,12 @@ def main():
     model = models.Agent(obs_dim=env.observation_space.shape[0], action_dim=env.action_space.shape[0],
                          h_dim=config.h_dim)
 
-    actor_optimizer = torch.optim.Adam([{"params": model.actor.parameters(), "lr": config.actor_lr}])
-    critic_optimizer = torch.optim.Adam([{"params": model.critic.parameters(), "lr": config.critic_lr},
-                                         {"params": model.q.parameters(), "lr": config.critic_lr}
-                                         ])
+    actor_optimizer = torch.optim.Adam([{"params": model.actor.parameters(), "lr": config.actor_lr}], eps=0.2)
+    critic_optimizer = torch.optim.Adam([
+        # {"params": model.critic.parameters(), "lr": config.critic_lr},
+        # {"params": model.q.parameters(), "lr": config.critic_lr}
+        {"params": model.q_and_v.parameters(), "lr": config.critic_lr}
+    ], eps=0.2)
     del env
 
     train(model, critic_optimizer, actor_optimizer, writer)
