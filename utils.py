@@ -21,6 +21,15 @@ def get_logger(name):
     return logger
 
 
+def l2_norm(parameters):
+    grad_norm = 0
+    for n, p in parameters:
+        if "bias" in n:
+            continue
+        grad_norm += p.norm().cpu()
+    return grad_norm
+
+
 class GymWrapper(gym.Wrapper):
     def step(self, action: T):
         if self.should_reset:
@@ -99,3 +108,22 @@ class RunningMeanStd:
         self.mean = new_mean
         self.var = new_var
         self.count = new_count
+
+
+def polyak_update_from_state_dict(
+        params,
+        target_params,
+        tau: float = 0.1,
+) -> None:
+    with torch.no_grad():
+        # zip does not raise an exception if length of parameters does not match.
+        for param, target_param in zip(params.values(), target_params.values()):
+            target_param.data.mul_(1 - tau)
+            torch.add(target_param.data, param.data, alpha=tau, out=target_param.data)
+
+
+def _test_polyak():
+    a = torch.nn.Linear(1, 1)
+    b = torch.nn.Linear(1, 1)
+    polyak_update_from_state_dict(a.state_dict(), b.state_dict(), tau=1)
+    assert a.weight == b.weight
