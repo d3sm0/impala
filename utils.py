@@ -20,6 +20,14 @@ def get_logger(name):
     logger.addHandler(logging.FileHandler(os.path.join("logs", name)))
     return logger
 
+def l2_norm(parameters):
+    grad_norm = 0
+    for n, p in parameters:
+        if "bias" in n:
+            continue
+        grad_norm += p.norm().cpu()
+    return grad_norm
+
 
 class GymWrapper(gym.Wrapper):
     def step(self, action: T):
