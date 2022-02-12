@@ -19,9 +19,9 @@ if deploy and not DEBUG:
     sweep_yaml = "sweep.yaml"
 
 max_steps = int(1e6)
-actor_lr = 1e-3
-critic_lr = 1e-3
-regularizer = 0.1  # kl regularizer
+actor_lr = 5e-3
+critic_lr = 5e-3
+regularizer = 0.001  # kl regularizer
 trajectory_len = 20
 num_actors = 1 if DEBUG else 5
 batch_size = 32
@@ -30,6 +30,6 @@ save_every = 100
 grad_clip = 40.
 
 seed = 33
-h_dim = 32
+h_dim = 128
 
-device = torch.device("cpu")
+device = torch.device("cuda")
