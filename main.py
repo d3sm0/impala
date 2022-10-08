@@ -4,8 +4,8 @@
 # LICENSE file in the root directory of this source tree.
 
 import copy
-import time
 
+import experiment_buddy
 import hydra
 import torch.multiprocessing as mp
 import torch.optim
@@ -25,8 +25,13 @@ torch.backends.cudnn.deterministic = True
 @hydra.main(config_path="configs", config_name="config")
 def main(cfg: Config):
     config_dict = OmegaConf.to_container(cfg, resolve=True)
-    writer = wandb.init(project="impala", mode="disabled", config=config_dict,
-                        settings=wandb.Settings(start_method="thread"))
+
+    experiment_buddy.register(config_dict)
+    writer = experiment_buddy.deploy(host="mila", wandb_kwargs={"project": "impala",
+                                                                "settings": wandb.Settings(start_method="thread")})
+
+    # writer = wandb.init(project="impala", mode="disabled", config=config_dict,
+    #                     settings=wandb.Settings(start_method="thread"))
 
     # we should have a function that takes the env and algos and return the model
 

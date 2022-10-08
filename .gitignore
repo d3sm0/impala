@@ -1,10 +1,10 @@
-runs
-wandb
-logs
 .trash
 .idea
 .aim
 .pytest_cache
+runs
+wandb
+logs
 outputs
 conf
 simple

@@ -1,5 +1,5 @@
-numpy
-torch
+# numpy
+# torch
 gym
 wandb
 -e git+ssh://git@github.com/d3sm0/RLego.git#egg=rlego
