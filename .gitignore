@@ -1,5 +1,11 @@
 runs
-.idea
 wandb
 logs
-_*
+.trash
+.idea
+.aim
+.pytest_cache
+outputs
+conf
+simple
+__pycache__

@@ -1,53 +1,37 @@
 import contextlib
-import logging
-import os
 import random
 import time
-from typing import Tuple, Union
 
-import gym
+import aim
 import numpy as np
 import torch
+from rlmeta.agents.agent import AgentFactory
+from rlmeta.core.callbacks import EpisodeCallbacks
+from rlmeta.core.controller import Controller, Phase
+from rlmeta.core.loop import ParallelLoop, LoopList
+from rlmeta.core.model import DownstreamModel, RemotableModel
+from rlmeta.core.remote import Remote
+from rlmeta.core.replay_buffer import ReplayBuffer, RemoteReplayBuffer
+from rlmeta.core.server import Server, ServerList
+from rlmeta.core.types import Action, TimeStep
+from rlmeta.samplers import UniformSampler
+from rlmeta.storage import TensorCircularBuffer
 
-T = torch.Tensor
+import envs
+from configs.config import Config
 
-
-def get_logger(name):
-    os.makedirs("logs", exist_ok=True)
-    logger = logging.Logger(name)
-    logger.setLevel(logging.INFO)
-    logger.addHandler(logging.StreamHandler())
-    logger.addHandler(logging.FileHandler(os.path.join("logs", name)))
-    return logger
-
-
-class GymWrapper(gym.Wrapper):
-    def step(self, action: T):
-        if self.should_reset:
-            return self.reset()
-        s, r, d, info = super(GymWrapper, self).step(action.numpy())
-        self.cumulative_reward += r
-        if d:
-            info = {
-                "step": self.t,
-                "return": self.cumulative_reward
-            }
-            self.should_reset = True
-        self.t += 1
-        return torch.from_numpy(s).to(torch.float32), torch.tensor(r, dtype=torch.float32), torch.tensor(d, dtype=torch.float32), info
-
-    def reset(self, **kwargs):
-        s = super(GymWrapper, self).reset()
-        self.t = 0
-        self.cumulative_reward = 0
-        self.should_reset = False
-        return torch.from_numpy(s).to(torch.float32), torch.tensor(0.), torch.tensor(0.), {}
+TIMEOUT = 60
 
 
 @contextlib.contextmanager
 def timer():
     start = time.perf_counter()
     yield lambda: time.perf_counter() - start
+
+
+class FakeRun:
+    def track(self, *args, **kwargs):
+        pass
 
 
 def set_seed(seed):
@@ -57,45 +41,98 @@ def set_seed(seed):
     random.seed(seed)
 
 
-class RunningMeanStd:
-    def __init__(self, epsilon: float = 1e-4, shape: Tuple[int, ...] = ()):
-        """
-        Calulates the running mean and std of a data stream
-        https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Parallel_algorithm
+class Run:
+    def __init__(self, disabled=False):
+        if disabled:
+            self.run = FakeRun()
+        else:
+            self.run = aim.Run()
+        self.config = {}
 
-        :param epsilon: helps with arithmetic issues
-        :param shape: the shape of the data stream's output
-        """
-        self.mean = torch.zeros(shape, dtype=torch.float32)
-        self.var = torch.ones(shape, dtype=torch.float32)
-        self.count = epsilon
+    def save(self, *args, **kwargs):
+        pass
 
-    def combine(self, other: "RunningMeanStd") -> None:
-        """
-        Combine stats from another ``RunningMeanStd`` object.
+    def log(self, metrics, step):
+        for k, v in metrics.items():
+            self.run.track(v, k, step=step)
 
-        :param other: The other object to combine with.
-        """
-        self.update_from_moments(other.mean, other.var, other.count)
+    def add_figures(self, figures, step):
+        for k, v in figures.items():
+            self.run.track(aim.Figure(v), k, step=step)
 
-    def update(self, arr: T) -> None:
-        batch_mean = torch.mean(arr, dim=0)
-        batch_var = torch.var(arr, dim=0)
-        batch_count = arr.shape[0]
-        self.update_from_moments(batch_mean, batch_var, batch_count)
+    def __del__(self):
+        self.run.finalize()
 
-    def update_from_moments(self, batch_mean: T, batch_var: T, batch_count: Union[int, float]) -> None:
-        delta = batch_mean - self.mean
-        tot_count = self.count + batch_count
 
-        new_mean = self.mean + delta * batch_count / tot_count
-        m_a = self.var * self.count
-        m_b = batch_var * batch_count
-        m_2 = m_a + m_b + np.square(delta) * self.count * batch_count / (self.count + batch_count)
-        new_var = m_2 / (self.count + batch_count)
+class Writer:
+    def __init__(self, disabled):
+        self.run = Run(disabled)
 
-        new_count = batch_count + self.count
+    def __del__(self):
+        del self.run
 
-        self.mean = new_mean
-        self.var = new_var
-        self.count = new_count
+
+class RecordMetrics(EpisodeCallbacks):
+    def on_episode_step(self, index: int, step: int, action: Action, timestep: TimeStep) -> None:
+        if "episode" in timestep.info.keys():
+            results = timestep.info["episode"]
+            mask = timestep.info["_episode"]
+            for key, value in results.items():
+                self.custom_metrics[key] = (value * mask).sum() / mask.sum()
+            self.custom_metrics["sps"] = (self.custom_metrics["l"] / self.custom_metrics["t"])
+
+
+def prepare_distributed(cfg: Config, RemoteAgent, infer_model: RemotableModel, train_model: RemotableModel):
+    ctrl = Controller()
+
+    rb = ReplayBuffer(TensorCircularBuffer(cfg.agent.replay_buffer_size),
+                      UniformSampler())
+
+    model_server = Server(cfg.distributed.m_server_name, cfg.distributed.m_server_addr)
+    rb_server = Server(cfg.distributed.r_server_name, cfg.distributed.r_server_addr)
+    controller_server = Server(cfg.distributed.c_server_name, cfg.distributed.c_server_addr)
+
+    model_server.add_service(infer_model)
+    rb_server.add_service(rb)
+    controller_server.add_service(ctrl)
+
+    servers = ServerList([model_server, rb_server, controller_server])
+
+    async_model = DownstreamModel(train_model, model_server.name, model_server.addr, timeout=TIMEOUT)
+    # evaluate_model = Remote(infer_model, model_server.name, model_server.addr, None, timeout=60)
+    infer_model = Remote(infer_model, model_server.name, model_server.addr, timeout=TIMEOUT)
+
+    async_ctrl = Remote(ctrl, controller_server.name, controller_server.addr, timeout=TIMEOUT)
+    train_ctrl = Remote(ctrl, controller_server.name, controller_server.addr, timeout=TIMEOUT)
+    # evaluate_ctrl = Remote(ctrl, controller_server.name, controller_server.addr, None, timeout=60)
+
+    a_rb = RemoteReplayBuffer(rb, rb_server.name, rb_server.addr, timeout=TIMEOUT, prefetch=cfg.agent.prefetch)
+    train_rb = RemoteReplayBuffer(rb, rb_server.name, rb_server.addr, timeout=TIMEOUT)
+    # TODO just from config env
+    env_fac = envs.EnvFactory(cfg.task.env_id, cfg.task.benchmark)
+    # TODO: we might need to pass kwargs here
+    train_agent_factory = AgentFactory(RemoteAgent, infer_model, replay_buffer=train_rb,
+                                       rollout_length=cfg.agent.rollout_length)
+    train_loop = ParallelLoop(env_fac,
+                              train_agent_factory,
+                              train_ctrl,
+                              running_phase=Phase.TRAIN,
+                              should_update=True,
+                              num_workers=cfg.training.num_workers,
+                              num_rollouts=cfg.training.num_rollouts,
+                              seed=cfg.training.seed,
+                              episode_callbacks=RecordMetrics(),
+                              )
+    # evaluate_agent_fac = AgentFactory(RemoteAgent, evaluate_model, deterministic_policy=cfg.deterministic_policy)
+    # evaluate_loop = ParallelLoop(env_fac,
+    #                              evaluate_agent_fac,
+    #                              evaluate_ctrl,
+    #                              running_phase=Phase.EVAL,
+    #                              should_update=False,
+    #                              num_rollouts=cfg.num_eval_rollouts,
+    #                              num_workers=cfg.num_eval_workers,
+    #                              seed=cfg.eval_seed,
+    #                              episode_callbacks=RecordMetrics(),
+    #                              )
+    loops = LoopList([train_loop])  # , evaluate_loop])
+    return servers, loops, async_model, async_ctrl, a_rb
