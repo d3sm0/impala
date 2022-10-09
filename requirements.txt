@@ -2,5 +2,9 @@
 # torch
 gym
 wandb
--e git+ssh://git@github.com/d3sm0/RLego.git#egg=rlego
--e git+https://github.com/ministry-of-silly-code/experiment_buddy#egg=experiment_buddy
+hydra-core
+functorch
+-e git+https://github.com/d3sm0/RLego.git#egg=rlego
+-e git+https://github.com/d3sm0/experiment_buddy#egg=experiment_buddy
+envpool
+procgen
