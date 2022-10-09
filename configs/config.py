@@ -17,7 +17,7 @@ class Distributed:
     c_server_addr: str = "127.0.0.1:4413"
 
     train_device: str = "cuda:0"
-    infer_device: str = "cpu"
+    infer_device: str = "cuda:0"
 
 
 @dataclasses.dataclass
@@ -31,16 +31,17 @@ class Evaluation:
 @dataclasses.dataclass
 class Training:
     num_workers: int = 8
-    num_rollouts: int = 16
+    num_rollouts: int = 64
     seed: int = 123
     num_epochs: int = 3000
     steps_per_epoch: int = 1000
 
 
+# TODO: how to set variables at runtime?
 @dataclasses.dataclass
 class Task:
-    env_id: str = "Pong-v5"
-    benchmark: str = "atari"
+    env_id: str = "starpilot"
+    benchmark: str = "procgen"
 
 
 @dataclasses.dataclass

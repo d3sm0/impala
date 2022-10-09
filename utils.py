@@ -2,7 +2,7 @@ import contextlib
 import random
 import time
 
-import aim
+# import aim
 import numpy as np
 import torch
 from rlmeta.agents.agent import AgentFactory

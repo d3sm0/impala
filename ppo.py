@@ -173,14 +173,14 @@ class PPOAgent(DistributedAgent):
             stats.extend(step_stats)
             stats.extend(time_stats)
 
-            writer.log({**step_stats, **time_stats})
+            writer.run.log({**step_stats, **time_stats})
 
             self._step_counter += 1
             if self._step_counter % self._model_push_period == 0:
                 self._model.push()
 
         episode_stats = self._controller.stats(Phase.TRAIN)
-        writer.log({k: v["mean"] for k, v in episode_stats.dict().items()})
+        writer.run.log({k: v["mean"] for k, v in episode_stats.dict().items()})
         self._controller.reset_phase(Phase.TRAIN)
 
         return stats

@@ -11,14 +11,14 @@ class AtariPPOModel(RemotableModel):
 
     def __init__(self, task_id: str, observation_space: Tuple[int, ...], action_dim: int) -> None:
         super().__init__()
-        self.model = get_model(task_id)(observation_space, action_space=action_dim)
+        self.model = get_model(task_id)(observation_space, action_dim)
 
     def forward(self, obs: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         p, v = self.model(obs)
         return p, v
 
     # This parameters should be equal to the number of active env at any given time
-    @remote.remote_method(batch_size=4 * 8)
+    @remote.remote_method(batch_size=64 * 8)
     def act(self, obs: torch.Tensor, deterministic_policy: torch.Tensor) -> Tuple[
         torch.Tensor, torch.Tensor, torch.Tensor]:
         device = next(self.parameters()).device

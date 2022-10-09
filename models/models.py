@@ -34,7 +34,7 @@ class LinearBody(nn.Module):
 
 
 class ImpalaActorCritic(nn.Module):
-    def __init__(self, obs_dim: Tuple[int, ...], action_dim: int, h_dim=100):
+    def __init__(self, obs_dim: Tuple[int, ...], action_dim: int, h_dim=256):
         super().__init__()
         self.body = ImpalaCNN(obs_dim, d_model=h_dim)
         self.policy = layer_init_normed(nn.Linear(h_dim, action_dim))
@@ -47,9 +47,42 @@ class ImpalaActorCritic(nn.Module):
         return pi, v
 
 
-class AtariActorCritic(nn.Module):
-    def __init__(self, observation_space=None, action_space=None):
-        super(AtariActorCritic, self).__init__()
+class AtariDQN(nn.Module):
+    def __init__(self, obs_dim: Tuple[int, ...], action_dim: int, h_dim=512):
+        super().__init__()
+        self.body = AtariBody(obs_dim)
+        self.q = layer_init_normed(nn.Linear(h_dim, action_dim))
+        self.v = layer_init_normed(nn.Linear(h_dim, 1))
+
+    def forward(self, s):
+        h = self.body(s / 255.)
+        q = self.q(h)
+        v = self.v(h)
+        return v + q - q.mean(dim=-1, keepdim=True)
+
+
+class DQN(nn.Module):
+    def __init__(self, k, v):
+        super().__init__()
+        # obs_dim, = obs_dim
+        self.body = nn.Sequential(
+            layer_init(nn.Linear(4, 120)),
+            nn.ReLU(),
+            layer_init(nn.Linear(120, 84)),
+            nn.ReLU())
+        self.q = layer_init_normed(nn.Linear(84, 2))
+        self.v = layer_init_normed(nn.Linear(84, 1))
+
+    def forward(self, x):
+        h = self.body(x)
+        q = self.q(h)
+        v = self.v(h)
+        return v + q - q.mean(dim=-1, keepdim=True)
+
+
+class AtariBody(nn.Module):
+    def __init__(self, obs_dim: Tuple[int, ...], h_dim=256):
+        super().__init__()
         self.body = nn.Sequential(
             layer_init(nn.Conv2d(4, 32, 8, stride=4)),
             nn.ReLU(),
@@ -61,8 +94,17 @@ class AtariActorCritic(nn.Module):
             layer_init(nn.Linear(64 * 7 * 7, 512)),
             nn.ReLU(),
         )
-        self.actor = layer_init(nn.Linear(512, 6), std=0.01)
+
+    def forward(self, x):
+        return self.body(x)
+
+
+class AtariActorCritic(nn.Module):
+    def __init__(self, observation_space=None, action_space=None):
+        super(AtariActorCritic, self).__init__()
+        self.actor = layer_init(nn.Linear(512, action_space), std=0.01)
         self.critic = layer_init(nn.Linear(512, 1), std=1)
+        self.body = AtariBody(observation_space)
 
     def forward(self, x):
         x = x / 255.

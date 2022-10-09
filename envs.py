@@ -51,6 +51,9 @@ class ProcWrap(gym.Wrapper):
         info = {k: [d[k] for d in info] for k in info[0]}
         return self._observation_fn(obs), self._reward_fn(rew), done, done, info
 
+    def seed(self, *args, **kwargs):
+        return
+
     def reset(self, **kwargs):
         return self._observation_fn(self.env.reset(**kwargs))
 
@@ -83,10 +86,13 @@ def make_procgen(task_id='starpilot', num_envs=1, seed=33):
     return env
 
 
-def make_atari(task_id, num_envs=1, seed=33):
-    env = envpool.make_gym(task_id, num_envs=num_envs, seed=seed)
+def make_atari(task_id, batch_size=1, seed=33, async_envs=False):
+    num_envs = batch_size
+    if async_envs:
+        num_envs = batch_size * 3
+    env = envpool.make_gym(task_id, batch_size=batch_size, num_envs=num_envs, seed=seed)
     env.is_vector_env = True
-    env.num_envs = num_envs
+    env.num_envs = batch_size
     env = AtariWrap(env)
     env = gym.wrappers.RecordEpisodeStatistics(env)
     return env

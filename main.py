@@ -9,10 +9,10 @@ import experiment_buddy
 import hydra
 import torch.multiprocessing as mp
 import torch.optim
+import wandb
 from omegaconf import OmegaConf
 
 import envs
-import wandb
 from configs.config import Config
 from models.distributed_models import AtariPPOModel
 from ppo import PPOAgent
@@ -26,11 +26,15 @@ torch.backends.cudnn.deterministic = True
 def main(cfg: Config):
     config_dict = OmegaConf.to_container(cfg, resolve=True)
 
-    experiment_buddy.register(config_dict)
+    experiment_buddy.register_defaults(config_dict)
     writer = experiment_buddy.deploy(host="mila", wandb_kwargs={"project": "impala",
-                                                                "settings": wandb.Settings(start_method="thread")})
+                                                                "settings": wandb.Settings(start_method="thread")},
+                                     extra_modules=["cuda/11.1/cudnn/8.0", "python/3.7", "gcc"])
 
-    # writer = wandb.init(project="impala", mode="disabled", config=config_dict,
+    # writer = wandb.init(project="impala",
+    #                     name=f"{cfg.task.env_id}-{cfg.task.benchmark}",
+    #                     # mode="disabled",
+    #                     config=config_dict,
     #                     settings=wandb.Settings(start_method="thread"))
 
     # we should have a function that takes the env and algos and return the model
