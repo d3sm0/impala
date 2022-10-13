@@ -1,4 +1,5 @@
 defaults:
+  - _self_
   - agent: ppo
   - override hydra/hydra_logging: disabled
   - override hydra/job_logging: disabled
@@ -9,40 +10,37 @@ hydra:
     dir: .
 
 distributed:
+  server_addr: "127.0.0.1"
   m_server_name: "m_server"
-  m_server_addr: "127.0.0.1:4411"
+  m_server_addr: ${distributed.server_addr}:4411
 
   r_server_name: "r_server"
-  r_server_addr: "127.0.0.1:4412"
+  r_server_addr: ${distributed.server_addr}:4412"
 
   c_server_name: "c_server"
-  c_server_addr: "127.0.0.1:4413"
+  c_server_addr: ${distributed.server_addr}:4413
 
   train_device: "cuda:0"
   infer_device: "cuda:0"
   host: ""
 
 task:
-  env_id: "Pong-v5"
+  env_id: "Breakout-v5"
   benchmark: "atari"
-  total_frames: 10000000 # 10M samples i.e. 40M frames
+  total_frames: 100000000 # 10M samples i.e. 40M frames
 
 evaluation:
-  num_workers: 1
-  num_rollouts: 1
+  num_workers: 4
+  num_rollouts: 8
   seed: 456
   deterministic_policy: true
-  num_episodes: 1
+  num_episodes: 4
 
 training:
-  num_workers: 6
-  num_rollouts: 12
+  num_workers: 4
+  num_rollouts: 8
   seed: 123
   num_epochs: 1000
-  steps_per_epoch: 3000
-
-
-optimizer:
-  lr: 1e-4
-  eps: 1e-5
+  steps_per_epoch: 5000
+  prefetch: 5
 

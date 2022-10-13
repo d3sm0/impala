@@ -8,3 +8,5 @@ logs
 # outputs
 simple
 __pycache__
+models/sac_model.py
+agents/sac

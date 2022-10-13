@@ -17,9 +17,10 @@ class EnvPool(GymWrapper):
     def step(self, action: Action) -> TimeStep:
         # The new gym api carries terminal. We don't care for now, as evnpool, skip one step which we mask later
         # in the env
-        s, r, d, _, info = self.env.step(action.action.cpu().numpy())
-        return TimeStep(observation=self._observation_fn(s), reward=torch.tensor(r),
-                        done=torch.tensor(d, dtype=torch.bool), info=info)
+        s, r, d, info = self.env.step(action.action.cpu().numpy())
+        r = torch.tensor(r)
+        d = torch.tensor(d, dtype=torch.bool)
+        return TimeStep(observation=self._observation_fn(s), reward=r, done=d, info=info)
 
     def reset(self, *args, **kwargs) -> TimeStep:
         s = self.env.reset(*args, **kwargs)
@@ -39,13 +40,14 @@ class EnvSpec(NamedTuple):
 
 
 class EnvFactory(rlmeta.envs.env.EnvFactory):
-    def __init__(self, task_id: str, library_str: str = 'atari'):
+    def __init__(self, task_id: str, library_str: str = 'atari', train: bool = True):
         self.task_id = task_id
         self.library = library_str
+        self.train = train
 
     def __call__(self, seed) -> EnvPool:
         make_fn = _libraries[self.library]
-        return EnvPool(make_fn(self.task_id, seed=seed), observation_fn=squeze_obs)
+        return EnvPool(make_fn(self.task_id, seed=seed, train=self.train), observation_fn=squeze_obs)
 
     def get_spec(self):
         env = self.__call__(0)
@@ -104,15 +106,19 @@ def make_procgen(task_id='starpilot', num_envs=1, seed=33):
     return env
 
 
-def make_atari(task_id, batch_size=1, seed=33, async_envs=False):
+def make_atari(task_id, batch_size=1, seed=33, async_envs=False, train: bool = True):
     num_envs = batch_size
     if async_envs:
         num_envs = batch_size * 3
-    env = envpool.make_gym(task_id, batch_size=batch_size, num_envs=num_envs, seed=seed)
-    env.is_vector_env = True
-    env.num_envs = batch_size
-    env = AtariWrap(env)
-    env = gym.wrappers.RecordEpisodeStatistics(env)
+    reward_clip = False
+    episodic_life = False
+    if train:
+        reward_clip = True
+        episodic_life = True
+    env = envpool.make_gym(task_id, batch_size=batch_size, num_envs=num_envs, seed=seed, reward_clip=reward_clip,
+                           # taken from dqn zoo
+                           episodic_life=episodic_life, max_episode_steps=10800)
+
     return env
 
 

@@ -17,23 +17,26 @@ class DistributedAgent(Agent):
         self._controller = controller
         self._learner = learner
         self._writer = writer
-        self.start_time = time.perf_counter()
+        self._stats_dict = StatsDict()
+        self._start_time = time.perf_counter()
 
-    def train(self, num_steps: int) -> None:
+    def set_phase(self, phase=Phase.TRAIN):
+        self._controller.set_phase(phase=phase)
+
+    def train(self, num_steps: int) -> int:
         self._controller.set_phase(Phase.TRAIN)
         self._learner.prepare()
         for local_steps in rich.progress.track(range(num_steps), description="Training"):
             metrics = self._learner.train_step()
+            self._stats_dict.extend(metrics)
             if local_steps % 100 == 0:
-                remote_metrics = self._controller.stats(Phase.TRAIN).dict()
-                new_samples = remote_metrics["episode_length"]["mean"] * remote_metrics["episode_length"]["count"]
-                delta_samples = (new_samples / (time.perf_counter() - self.start_time))
-                metrics["debug/samples_per_second"] = delta_samples
-                metrics["debug/gradient_per_second"] = self._learner._step_counter / (time.perf_counter() - self.start_time)
-                self._writer.run.log(metrics)
-
-        episode_stats = self._controller.stats(Phase.TRAIN)
-        self._writer.run.log({f"train_envs/{k.replace('/', '_')}": v['mean'] for k, v in episode_stats.dict().items()})
+                self._writer.run.log({k: v['mean'] for k, v in self._stats_dict.dict().items()})
+        remote_metrics = self._controller.stats(Phase.TRAIN).dict()
+        total_samples = remote_metrics["episode_length"]["mean"] * remote_metrics["episode_length"]["count"]
+        delta_samples = (total_samples / (time.perf_counter() - self._start_time))
+        self._writer.run.log({f"train_envs/{k.replace('/', '_')}": v['mean'] for k, v in remote_metrics.items()})
+        self._writer.run.log({"debug/samples_per_second": delta_samples})
+        return total_samples
 
     def eval(self,
              num_episodes: Optional[int] = None,
