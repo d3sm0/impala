@@ -2,7 +2,7 @@ import copy
 from typing import Optional
 
 import torch
-from _rlmeta_extension import UniformSampler
+from rlmeta import samplers
 from rlmeta.agents.agent import AgentFactory
 from rlmeta.core.model import ModelLike
 from rlmeta.core.replay_buffer import ReplayBuffer, ReplayBufferLike
@@ -30,7 +30,7 @@ class PPOBuilder(Builder):
     def make_replay(self):
         return ReplayBuffer(
             TensorCircularBuffer(self.cfg.agent.replay_buffer_size),
-            UniformSampler()
+            samplers.PrioritizedSampler(priority_exponent=0.6)
         )
 
     def make_actor(self, model: ModelLike, rb: Optional[ReplayBufferLike] = None, deterministic: bool = False):

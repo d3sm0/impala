@@ -44,7 +44,7 @@ class DistributedAgent(Agent):
             self._controller.set_phase(Phase.EVAL)
         self._controller.reset_phase(Phase.EVAL, limit=num_episodes)
         while self._controller.count(Phase.EVAL) < num_episodes:
-            time.sleep(1)
+            time.sleep(0.1)
         stats = self._controller.stats(Phase.EVAL)
         self._writer.run.log({f"eval_envs/{k.replace('/', '_')}": v['mean'] for k, v in stats.dict().items()})
         return stats

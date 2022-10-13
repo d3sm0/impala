@@ -109,7 +109,8 @@ def impala_loss(batch, model, lambda_=1., entropy_cost=0.01):
     with torch.no_grad():
         v_t = model(s1[-1:])[1].squeeze(-1)
         v_t = torch.cat([v_tm1[1:].squeeze(-1), v_t], dim=0)
-    adv, err, _ = rlego.vtrace_td_error_and_advantage(v_tm1.squeeze(-1), v_t, r, discount_t, ratio.detach(), lambda_=lambda_)
+    adv, err, _ = rlego.vtrace_td_error_and_advantage(v_tm1.squeeze(-1), v_t, r, discount_t, ratio.detach(),
+                                                      lambda_=lambda_)
     td_loss = 0.5 * err.pow(2).mean()
 
     # pg_loss_1 = -(adv * ratio)
@@ -131,27 +132,25 @@ def impala_loss(batch, model, lambda_=1., entropy_cost=0.01):
     }
 
 
-def ppo_loss(model, batch, entropy_cost=0.01, clip_coeff=0.1):
-    s, a, v_target, pi_ref = batch
-    pi_tm1, v_tm1 = model(s)
+# pg_loss = - (torch.log(torch.clamp(ratio, 1 / (1 + clip_coeff), 1 + clip_coeff)) * adv).mean()
+
+def ppo_loss(a, adv, pi_tm1, pi_ref, clip_coeff=0.1, entropy_cost=0.01):
     pi_tm1 = torch.distributions.Categorical(logits=pi_tm1)
     pi_ref = torch.distributions.Categorical(logits=pi_ref)
     ratio = torch.exp(pi_tm1.log_prob(a) - pi_ref.log_prob(a))
-    adv = (v_target - v_tm1.squeeze(-1))
-    td_loss = 0.5 * adv.pow(2).mean()
-    adv = adv.detach()
     pg_loss_1 = -(adv * ratio)
     pg_loss_2 = -torch.clamp(ratio, 1 - clip_coeff, 1 + clip_coeff) * adv
     pg_loss = torch.max(pg_loss_1, pg_loss_2).mean()
-    # pg_loss = - (torch.log(torch.clamp(ratio, 1 / (1 + clip_coeff), 1 + clip_coeff)) * adv).mean()
     kl = torch.distributions.kl_divergence(pi_tm1, pi_ref).mean().clamp_min(0.)
-    entropy = pi_tm1.entropy().mean()
-    loss = pg_loss + td_loss - entropy_cost * entropy
-    return loss, {
-        "train_step/loss": loss.detach(),
-        "train_step/entropy": entropy.detach(),
-        "train_step/td": td_loss.detach(),
-        "train_step/pg": pg_loss.detach(),
-        "train_step/kl": kl.detach(),
-        "train_step/ratio": ratio.mean().detach(),
+    return pg_loss - entropy_cost * pi_tm1.entropy().mean(), {
+        "loss": pg_loss.detach(),
+        "kl": kl.detach(),
+        "ratio": ratio.mean().detach(),
+        "entropy": pi_tm1.entropy().mean().detach(),
     }
+
+
+def value_loss(v_tm1, v_target, weights):
+    adv = (v_target - v_tm1.squeeze(-1))
+    td_loss = 0.5 * adv.pow(2).mul(weights).mean()
+    return td_loss, adv, {"td": td_loss.detach()}

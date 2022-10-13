@@ -75,7 +75,6 @@ def main(cfg):
 
     for epoch in range(cfg.training.num_epochs):
         agent.eval(cfg.evaluation.num_rollouts, keep_training_loops=True)
-        time.sleep(0.1)
         agent.train(cfg.training.steps_per_epoch)
     loops.terminate()
     servers.terminate()

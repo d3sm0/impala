@@ -107,6 +107,7 @@ class PPOLearner(Learner):
 
         self._device = None
         self._step_counter = 0
+        self._update_priorities_future = None
 
     def device(self) -> torch.device:
         if self._device is None:
@@ -118,28 +119,45 @@ class PPOLearner(Learner):
 
     def train_step(self):
         t0 = time.time()
-        _, batch, _ = self._replay_buffer.sample(self._batch_size)
+        keys, batch, priorities = self._replay_buffer.sample(self._batch_size)
         t1 = time.time()
-        metrics = self._train_step(batch)
+        metrics = self._train_step(batch, keys, priorities.float())
         t2 = time.time()
         self._step_counter += 1
         if self._step_counter % self._model_push_period == 0:
             self._model.push()
+
         metrics["debug/replay_buffer_dt"] = (t1 - t0) * 1000
         metrics["debug/forward_dt"] = (t2 - t1) * 1000
         return metrics
 
-    def _train_step(self, batch: NestedTensor) -> Dict[str, float]:
-        s, a, v_target, pi_ref = nested_utils.map_nested(lambda x: x.to(self.device()), batch)
-        loss, metrics = losses.ppo_loss(self._model, (s, a, v_target, pi_ref), entropy_cost=self._entropy_coeff)
-
+    def _train_step(self, batch: NestedTensor, keys, priorities) -> Dict[str, float]:
+        (s, a, v_target, pi_ref), priorities = nested_utils.map_nested(lambda x: x.to(self.device()),
+                                                                       (batch, priorities))
+        pi_tm1, v_tm1 = self._model(s)
+        weights = priorities.pow(-0.4)
+        weights = weights / weights.max()
+        td, adv, value_info = losses.value_loss(v_tm1, v_target, weights=weights)
+        ppo_loss, policy_info = losses.ppo_loss(a, adv, pi_tm1, pi_ref, entropy_cost=self._entropy_coeff)
+        loss = ppo_loss + td
         loss.backward()
 
         grad_norm = torch.nn.utils.clip_grad_norm_(self._model.parameters(),
                                                    self._max_grad_norm)
-        metrics['train_step/grad_norm'] = grad_norm
+        metrics = {"loss": loss.item(), "grad_norm": grad_norm, **value_info, **policy_info}
 
         self._optimizer.step()
         self._optimizer.zero_grad()
+        with torch.no_grad():
+            pi_tm1, v_tm1 = self._model(s)
+            adv = (v_target - v_tm1.squeeze(-1))
+            log_prob = torch.distributions.Categorical(logits=pi_tm1).log_prob(a)
+            priorities = (adv * log_prob).abs().cpu()
+            priorities = priorities / (priorities.max() - priorities.min())
+            metrics["priorities"] = priorities.mean().item()
 
-        return metrics
+        if self._update_priorities_future is not None:
+            self._update_priorities_future.wait()
+        self._update_priorities_future = self._replay_buffer.async_update(keys, priorities)
+
+        return {f"train_step/{k}": v for k, v in metrics.items()}
