@@ -2,76 +2,81 @@
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
-
-import copy
+import logging
+import sys
+import time
 
 import experiment_buddy
 import hydra
+import omegaconf
+import rlmeta.utils.hydra_utils as hydra_utils
 import torch.multiprocessing as mp
-import torch.optim
 import wandb
-from omegaconf import OmegaConf
+from rlmeta.core.controller import Controller
+from rlmeta.core.loop import LoopList
 
 import envs
-from configs.config import Config
-from models.distributed_models import AtariPPOModel
-from ppo import PPOAgent
-from utils import prepare_distributed
-
-torch.backends.cudnn.benchmark = True
-torch.backends.cudnn.deterministic = True
+import utils
+from agents.distributed_agent import DistributedAgent
+# from agents.dqn.builder import ApexDQNBuilder
+from agents.ppo.builder import PPOBuilder
 
 
-@hydra.main(config_path="configs", config_name="config")
-def main(cfg: Config):
-    config_dict = OmegaConf.to_container(cfg, resolve=True)
+# from agents.impala.builder import ImpalaBuilder
 
-    experiment_buddy.register_defaults(config_dict)
-    writer = experiment_buddy.deploy(host="mila", wandb_kwargs={"project": "impala",
-                                                                "settings": wandb.Settings(start_method="thread")},
-                                     extra_modules=["cuda/11.1/cudnn/8.0", "python/3.7", "gcc"])
 
-    # writer = wandb.init(project="impala",
-    #                     name=f"{cfg.task.env_id}-{cfg.task.benchmark}",
-    #                     # mode="disabled",
-    #                     config=config_dict,
-    #                     settings=wandb.Settings(start_method="thread"))
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
 
-    # we should have a function that takes the env and algos and return the model
 
-    env = envs.EnvFactory(cfg.task.env_id, cfg.task.benchmark)(0)
-    train_model = AtariPPOModel(cfg.task.benchmark, env.observation_space.shape, env.action_space.n).to(
-        cfg.distributed.train_device)
+@hydra.main(version_base=None, config_path="./conf", config_name="config")
+def main(cfg):
+    logging.info(hydra_utils.config_to_json(cfg))
 
-    optimizer = torch.optim.Adam(train_model.parameters(), lr=cfg.optimizer.lr, eps=cfg.optimizer.eps)
-    infer_model = copy.deepcopy(train_model).to(cfg.distributed.infer_device)
-    servers, loops, async_model, async_ctrl, async_rb = prepare_distributed(cfg, PPOAgent, infer_model, train_model)
+    writer = experiment_buddy.deploy(host=cfg.distributed.host,
+                                     disabled=sys.gettrace() is not None,
+                                     wandb_kwargs={"project": "impala",
+                                                   "settings": wandb.Settings(start_method="thread"),
+                                                   "config": omegaconf.OmegaConf.to_container(
+                                                       cfg, resolve=True),
+                                                   # "tags": [cfg.distributed.host,
+                                                   #          cfg.task.benchmark]
+                                                   },
+                                     extra_modules=["cuda/11.1/cudnn/8.0", "python/3.7", "gcc", "libffi"])
+    builder = PPOBuilder(cfg)
 
-    agent = PPOAgent(async_model,
-                     replay_buffer=async_rb,
-                     controller=async_ctrl,
-                     optimizer=optimizer,
-                     batch_size=cfg.agent.batch_size,
-                     learning_starts=cfg.agent.learning_starts,
-                     model_push_period=cfg.agent.model_push_period,
-                     max_grad_norm=cfg.agent.max_grad_norm,
-                     entropy_coeff=cfg.agent.entropy_cost,
-                     rollout_length=cfg.agent.rollout_length
-                     )
+    env_factory = envs.EnvFactory(cfg.task.env_id)
+    # TODO: make spec here
+    train_model = builder.make_network(env_factory.get_spec())
+    rb = builder.make_replay()
+
+    ctrl = Controller()
+    servers = utils.create_servers(cfg, ctrl, builder.actor_model, rb)
+    e_ctrl, e_model, t_ctrl, t_model, t_rb = utils.create_workers(cfg, ctrl, builder.actor_model, rb)
+
+    t_agent_fac = builder.make_actor(t_model, t_rb, deterministic=False)
+    train_loop = utils.create_train_loop(cfg, env_factory, t_agent_fac, t_ctrl)
+
+    e_agent_fac = builder.make_actor(e_model, deterministic=True)
+    evaluate_loop = utils.create_evaluation_loops(cfg, env_factory, e_agent_fac, e_ctrl)
+
+    loops = LoopList([train_loop, evaluate_loop])
+
+    a_model, a_ctrl, a_rb = utils.create_master(cfg, ctrl, train_model, rb)
+
+    learner = builder.make_learner(a_model, a_rb)
+    agent = DistributedAgent(a_ctrl, learner, writer)
 
     servers.start()
     loops.start()
     agent.connect()
 
     for epoch in range(cfg.training.num_epochs):
-        # stats = agent.eval(cfg.num_eval_episodes, keep_training_loops=True).dict()
-        # stats = agent._controller.stats(phase=Phase.EVAL).dict()
-        # if not len(stats):
-        #     continue
-
-        # writer.log(stats)
-        stats = agent.train(cfg.training.steps_per_epoch, writer)
-        # torch.save(train_model.state_dict(), f"ppo_agent-{epoch}.pth")
+        agent.eval(cfg.evaluation.num_rollouts, keep_training_loops=True)
+        time.sleep(0.1)
+        agent.train(cfg.training.steps_per_epoch)
     loops.terminate()
     servers.terminate()
 

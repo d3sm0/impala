@@ -8,19 +8,17 @@ import torch
 from rlmeta.agents.agent import AgentFactory
 from rlmeta.core.callbacks import EpisodeCallbacks
 from rlmeta.core.controller import Controller, Phase
-from rlmeta.core.loop import ParallelLoop, LoopList
+from rlmeta.core.loop import ParallelLoop
 from rlmeta.core.model import DownstreamModel, RemotableModel
 from rlmeta.core.remote import Remote
 from rlmeta.core.replay_buffer import ReplayBuffer, RemoteReplayBuffer
 from rlmeta.core.server import Server, ServerList
 from rlmeta.core.types import Action, TimeStep
-from rlmeta.samplers import UniformSampler
-from rlmeta.storage import TensorCircularBuffer
+from rlmeta.envs.env import EnvFactory
 
-import envs
 from configs.config import Config
 
-TIMEOUT = 60
+TIMEOUT = 120
 
 
 @contextlib.contextmanager
@@ -79,42 +77,45 @@ class RecordMetrics(EpisodeCallbacks):
             mask = timestep.info["_episode"]
             for key, value in results.items():
                 self.custom_metrics[key] = (value * mask).sum() / mask.sum()
-            self.custom_metrics["sps"] = (self.custom_metrics["l"] / self.custom_metrics["t"])
+            # self.custom_metrics["sps"] = (self.custom_metrics["l"] / self.custom_metrics["t"])
 
 
-def prepare_distributed(cfg: Config, RemoteAgent, infer_model: RemotableModel, train_model: RemotableModel):
-    ctrl = Controller()
+def create_master(cfg: Config, ctrl: Controller, train_model: RemotableModel, rb: ReplayBuffer):
+    assert train_model.training is True
+    a_rb = RemoteReplayBuffer(rb, cfg.distributed.r_server_name, cfg.distributed.r_server_addr, timeout=TIMEOUT,
+                              prefetch=cfg.agent.prefetch)
+    async_ctrl = Remote(ctrl, cfg.distributed.c_server_name, cfg.distributed.c_server_addr, timeout=TIMEOUT)
+    async_model = DownstreamModel(train_model, cfg.distributed.m_server_name, cfg.distributed.m_server_addr,
+                                  timeout=TIMEOUT)
+    return async_model, async_ctrl, a_rb
 
-    rb = ReplayBuffer(TensorCircularBuffer(cfg.agent.replay_buffer_size),
-                      UniformSampler())
 
+def create_servers(cfg: Config, ctrl: Controller, model: RemotableModel, rb: ReplayBuffer):
+    # there is only one master
     model_server = Server(cfg.distributed.m_server_name, cfg.distributed.m_server_addr)
     rb_server = Server(cfg.distributed.r_server_name, cfg.distributed.r_server_addr)
     controller_server = Server(cfg.distributed.c_server_name, cfg.distributed.c_server_addr)
 
-    model_server.add_service(infer_model)
+    model_server.add_service(model)
     rb_server.add_service(rb)
     controller_server.add_service(ctrl)
-
     servers = ServerList([model_server, rb_server, controller_server])
+    return servers
 
-    async_model = DownstreamModel(train_model, model_server.name, model_server.addr, timeout=TIMEOUT)
-    # evaluate_model = Remote(infer_model, model_server.name, model_server.addr, None, timeout=60)
-    infer_model = Remote(infer_model, model_server.name, model_server.addr, timeout=TIMEOUT)
 
-    async_ctrl = Remote(ctrl, controller_server.name, controller_server.addr, timeout=TIMEOUT)
-    train_ctrl = Remote(ctrl, controller_server.name, controller_server.addr, timeout=TIMEOUT)
-    # evaluate_ctrl = Remote(ctrl, controller_server.name, controller_server.addr, None, timeout=60)
+def create_workers(cfg: Config, ctrl: Controller, infer_model: RemotableModel, rb: ReplayBuffer):
+    # this actions happens in the worker machine
+    evaluate_model = Remote(infer_model, cfg.distributed.m_server_name, cfg.distributed.m_server_addr, timeout=TIMEOUT)
+    infer_model = Remote(infer_model, cfg.distributed.m_server_name, cfg.distributed.m_server_addr, timeout=TIMEOUT)
+    train_rb = RemoteReplayBuffer(rb, cfg.distributed.r_server_name, cfg.distributed.r_server_addr, timeout=TIMEOUT)
+    train_ctrl = Remote(ctrl, cfg.distributed.c_server_name, cfg.distributed.c_server_addr, timeout=TIMEOUT)
+    evaluate_ctrl = Remote(ctrl, cfg.distributed.c_server_name, cfg.distributed.c_server_addr, timeout=TIMEOUT)
+    return evaluate_ctrl, evaluate_model, train_ctrl, infer_model, train_rb
 
-    a_rb = RemoteReplayBuffer(rb, rb_server.name, rb_server.addr, timeout=TIMEOUT, prefetch=cfg.agent.prefetch)
-    train_rb = RemoteReplayBuffer(rb, rb_server.name, rb_server.addr, timeout=TIMEOUT)
-    # TODO just from config env
-    env_fac = envs.EnvFactory(cfg.task.env_id, cfg.task.benchmark)
-    # TODO: we might need to pass kwargs here
-    train_agent_factory = AgentFactory(RemoteAgent, infer_model, replay_buffer=train_rb,
-                                       rollout_length=cfg.agent.rollout_length)
+
+def create_train_loop(cfg: Config, env_fac: EnvFactory, agent_factory: AgentFactory, train_ctrl: Controller):
     train_loop = ParallelLoop(env_fac,
-                              train_agent_factory,
+                              agent_factory,
                               train_ctrl,
                               running_phase=Phase.TRAIN,
                               should_update=True,
@@ -123,16 +124,19 @@ def prepare_distributed(cfg: Config, RemoteAgent, infer_model: RemotableModel, t
                               seed=cfg.training.seed,
                               episode_callbacks=RecordMetrics(),
                               )
-    # evaluate_agent_fac = AgentFactory(RemoteAgent, evaluate_model, deterministic_policy=cfg.deterministic_policy)
-    # evaluate_loop = ParallelLoop(env_fac,
-    #                              evaluate_agent_fac,
-    #                              evaluate_ctrl,
-    #                              running_phase=Phase.EVAL,
-    #                              should_update=False,
-    #                              num_rollouts=cfg.num_eval_rollouts,
-    #                              num_workers=cfg.num_eval_workers,
-    #                              seed=cfg.eval_seed,
-    #                              episode_callbacks=RecordMetrics(),
-    #                              )
-    loops = LoopList([train_loop])  # , evaluate_loop])
-    return servers, loops, async_model, async_ctrl, a_rb
+    return train_loop
+
+
+def create_evaluation_loops(cfg: Config, env_factory: EnvFactory, agent_factory: AgentFactory,
+                            evaluate_ctrl: Controller):
+    evaluate_loop = ParallelLoop(env_factory,
+                                 agent_factory,
+                                 evaluate_ctrl,
+                                 running_phase=Phase.EVAL,
+                                 should_update=False,
+                                 num_rollouts=cfg.evaluation.num_workers,
+                                 num_workers=cfg.evaluation.num_rollouts,
+                                 seed=cfg.evaluation.seed,
+                                 episode_callbacks=RecordMetrics(),
+                                 )
+    return evaluate_loop

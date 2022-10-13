@@ -1,12 +1,17 @@
+from typing import NamedTuple
+
 import envpool
 import gym
 import numpy as np
 import procgen
+import rlmeta.envs.env
 import torch
 from gym.utils.step_api_compatibility import convert_to_terminated_truncated_step_api
 from rlmeta.core.types import TimeStep, Action
 from rlmeta.envs.gym_wrappers import GymWrapper
 
+
+# TODO: create environment spec type
 
 class EnvPool(GymWrapper):
     def step(self, action: Action) -> TimeStep:
@@ -28,17 +33,30 @@ def squeze_obs(obs):
     return torch.from_numpy(obs).squeeze(0)
 
 
-class EnvFactory:
+class EnvSpec(NamedTuple):
+    observation_space: gym.spaces.Space
+    action_space: gym.spaces.Space
+
+
+class EnvFactory(rlmeta.envs.env.EnvFactory):
     def __init__(self, task_id: str, library_str: str = 'atari'):
         self.task_id = task_id
         self.library = library_str
 
-    def __call__(self, seed):
+    def __call__(self, seed) -> EnvPool:
         make_fn = _libraries[self.library]
         return EnvPool(make_fn(self.task_id, seed=seed), observation_fn=squeze_obs)
 
+    def get_spec(self):
+        env = self.__call__(0)
+        env_spec = EnvSpec(env.observation_space, env.action_space)
+        del env
+        return env_spec
+
 
 class ProcWrap(gym.Wrapper):
+    render_mode = "rgb_array"
+
     def __init__(self, env: procgen.ProcgenEnv):
         super().__init__(env)
         self.observation_space = env.observation_space['rgb']

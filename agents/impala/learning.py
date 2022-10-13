@@ -1,0 +1,133 @@
+from typing import Dict, List, Optional
+
+import moolib
+import rlmeta.utils.nested_utils as nested_utils
+import torch
+from rlmeta.core.model import ModelLike
+from rlmeta.core.replay_buffer import ReplayBufferLike
+from rlmeta.core.types import Action, TimeStep
+from rlmeta.core.types import NestedTensor
+
+import losses
+from agents.core import Actor, Learner
+
+
+class ImpalaActor(Actor):
+    def __init__(self, model: ModelLike,
+                 replay_buffer: ReplayBufferLike,
+                 deterministic_policy: bool = False,
+                 gamma: float = 0.99,
+                 lambda_: float = 0.95,
+                 rollout_length: int = 20
+                 ):
+        self._gamma = gamma
+        self._lambda = lambda_
+        self._deterministic_policy = torch.tensor([deterministic_policy])
+        self._model = model
+        self._replay_buffer = replay_buffer
+        self._trajectory = moolib.Batcher(rollout_length, dim=0, device="cpu")
+        self._last_transition = None
+
+    def act(self, timestep: TimeStep) -> Action:
+        obs = timestep.observation
+        action, logpi, v = self._model.act(obs, self._deterministic_policy)
+        return Action(action, info={"logpi": logpi, "v": v})
+
+    async def async_act(self, timestep: TimeStep) -> Action:
+        obs = timestep.observation
+        action, logpi, v = await self._model.async_act(
+            obs, self._deterministic_policy)
+        return Action(action, info={"logpi": logpi, "v": v})
+
+    async def async_observe_init(self, timestep: TimeStep) -> None:
+        if self._replay_buffer is None:
+            return
+        obs, _, _, _ = timestep
+        self._last_transition = obs.clone()
+
+    async def async_observe(self, action: Action,
+                            next_timestep: TimeStep) -> None:
+        if self._replay_buffer is None:
+            return
+        obs = self._last_transition
+        act, action_info = action
+        next_obs, reward, done, _ = next_timestep
+        self._trajectory.stack((obs, act, reward, next_obs, done, action_info["logpi"], action_info["v"]))
+        self._last_transition = next_obs.clone()
+
+    async def async_update(self) -> None:
+        if self._replay_buffer is not None:
+            if not self._trajectory.empty():
+                replay = await self._async_make_replay()
+                await self._async_send_replay(replay)
+
+    def _make_replay(self) -> List[NestedTensor]:
+        s, a, r, s1, d, pi_ref, values = self._trajectory.get()
+        not_done = torch.logical_not(d)
+        mask = torch.ones_like(not_done) * not_done.roll(1, dims=(0,))
+        discount_t = (mask * not_done) * self._gamma
+        return [s, a, r, s1, discount_t, pi_ref]
+
+    async def _async_make_replay(self) -> List[NestedTensor]:
+        return self._make_replay()
+
+    async def _async_send_replay(self, replay: List[NestedTensor]) -> None:
+        await self._replay_buffer.async_append(replay)
+
+
+class ImpalaLearner(Learner):
+
+    def __init__(self,
+                 model: ModelLike,
+                 replay_buffer: ReplayBufferLike,
+                 optimizer: torch.optim.Optimizer,
+                 batch_size: int = 8,
+                 max_grad_norm: float = 0.5,
+                 entropy_coeff: float = 0.01,
+                 learning_starts: Optional[int] = None,
+                 model_push_period: int = 4) -> None:
+        self._model = model
+        self._replay_buffer = replay_buffer
+
+        self._optimizer = optimizer
+        self._batch_size = batch_size
+        self._max_grad_norm = max_grad_norm
+        self._entropy_coeff = entropy_coeff
+
+        self._learning_starts = learning_starts
+        self._model_push_period = model_push_period
+
+        self._device = None
+        self._step_count = 0
+
+    def device(self) -> torch.device:
+        if self._device is None:
+            self._device = next(self._model.parameters()).device
+        return self._device
+
+    def prepare(self):
+        self._replay_buffer.warm_up(self._learning_starts)
+
+    def train_step(self):
+        _, batch, _ = self._replay_buffer.sample(self._batch_size)
+        metrics = self._train_step(batch)
+        self._step_count += 1
+        if self._step_count % self._model_push_period == 0:
+            self._model.push()
+        return metrics
+
+    def _train_step(self, batch: NestedTensor) -> Dict[str, float]:
+        batch = nested_utils.map_nested(lambda x: x.to(self.device()).squeeze(dim=-1), batch)
+        self._optimizer.zero_grad()
+        metrics = {}
+        for b in nested_utils.unbatch_nested(lambda x: x, batch, self._batch_size):
+            loss, metrics = losses.impala_loss(b, self._model, entropy_cost=self._entropy_coeff)
+            loss.backward()
+        grad_norm = torch.nn.utils.clip_grad_norm_(self._model.parameters(),
+                                                   self._max_grad_norm)
+        metrics['train/grad_norm'] = grad_norm
+
+        self._optimizer.step()
+        self._optimizer.zero_grad()
+
+        return metrics

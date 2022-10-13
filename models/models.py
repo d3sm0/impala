@@ -50,7 +50,7 @@ class ImpalaActorCritic(nn.Module):
 class AtariDQN(nn.Module):
     def __init__(self, obs_dim: Tuple[int, ...], action_dim: int, h_dim=512):
         super().__init__()
-        self.body = AtariBody(obs_dim)
+        self.body = AtariBody((4,), action_dim)
         self.q = layer_init_normed(nn.Linear(h_dim, action_dim))
         self.v = layer_init_normed(nn.Linear(h_dim, 1))
 
@@ -100,11 +100,11 @@ class AtariBody(nn.Module):
 
 
 class AtariActorCritic(nn.Module):
-    def __init__(self, observation_space=None, action_space=None):
+    def __init__(self, observation_space=None, action_space: int = 6):
         super(AtariActorCritic, self).__init__()
+        self.body = AtariBody(observation_space)
         self.actor = layer_init(nn.Linear(512, action_space), std=0.01)
         self.critic = layer_init(nn.Linear(512, 1), std=1)
-        self.body = AtariBody(observation_space)
 
     def forward(self, x):
         x = x / 255.
@@ -256,10 +256,3 @@ class ImpalaCNN(nn.Module):
 
     def forward(self, x):
         return self.network(x)
-
-
-_register = {"procgen": ImpalaActorCritic, "atari": AtariActorCritic, "control": ActorCritic}
-
-
-def get_model(task_id):
-    return _register[task_id]

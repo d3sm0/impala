@@ -1,15 +1,20 @@
-import functorch
+# import functorch
 import rlego
 import torch
 from rlmeta.utils import nested_utils
 
-batched_vtrace = functorch.vmap(rlego.vtrace_td_error_and_advantage)
-batched_gae = functorch.vmap(rlego.truncated_generalized_advantage_estimation)
-batched_is = functorch.vmap(rlego.importance_corrected_td_errors)
+import models.distributed_models
+
+
+# TODO: refactor losses
+
+# batched_vtrace = functorch.vmap(rlego.vtrace_td_error_and_advantage)
+# batched_gae = functorch.vmap(rlego.truncated_generalized_advantage_estimation)
+# batched_is = functorch.vmap(rlego.importance_corrected_td_errors)
 
 
 def get_muesli(q, v, pi, n_samples=16):
-    actions = pi.sample(sample_shape=(n_samples,))
+    actions = models.distributed_models.sample(sample_shape=(n_samples,))
     one_hot = torch.nn.functional.one_hot(actions, num_classes=q.shape[-1]).float()
     q_values = (one_hot * q).sum(-1)
     adv = torch.clamp(q_values - v, -1, 1).exp()
@@ -94,17 +99,17 @@ def pre_process(batch, gamma=0.99, device="cpu"):
     return nested_utils.map_nested(lambda x: x.to(device).squeeze(-1), (s, a, r, s1, discount_t, pi_ref))
 
 
-def impala_loss(batch, model, lambda_=1., entropy_cost=0.01, clip_coeff=0.1):
+def impala_loss(batch, model, lambda_=1., entropy_cost=0.01):
     s, a, r, s1, discount_t, pi_ref = batch
-    pi_tm1, v_tm1 = functorch.vmap(model)(s)
+    pi_tm1, v_tm1 = model(s)
     pi_tm1 = torch.distributions.Categorical(logits=pi_tm1)
     pi_ref = torch.distributions.Categorical(logits=pi_ref)
     ratio = torch.exp(pi_tm1.log_prob(a) - pi_ref.log_prob(a))
 
     with torch.no_grad():
-        _, v_t = functorch.vmap(model)(s1[:, -1:])
-        v_t = torch.cat([v_tm1[:, 1:], v_t], dim=1)
-    adv, err, _ = batched_vtrace(v_tm1.squeeze(-1), v_t.squeeze(-1), r, discount_t, ratio.detach(), lambda_=lambda_)
+        v_t = model(s1[-1:])[1].squeeze(-1)
+        v_t = torch.cat([v_tm1[1:].squeeze(-1), v_t], dim=0)
+    adv, err, _ = rlego.vtrace_td_error_and_advantage(v_tm1.squeeze(-1), v_t, r, discount_t, ratio.detach(), lambda_=lambda_)
     td_loss = 0.5 * err.pow(2).mean()
 
     # pg_loss_1 = -(adv * ratio)
@@ -135,18 +140,18 @@ def ppo_loss(model, batch, entropy_cost=0.01, clip_coeff=0.1):
     adv = (v_target - v_tm1.squeeze(-1))
     td_loss = 0.5 * adv.pow(2).mean()
     adv = adv.detach()
-    # pg_loss_1 = -(adv * ratio)
-    # pg_loss_2 = -torch.clamp(ratio, 1 - clip_coeff, 1 + clip_coeff) * adv
-    # pg_loss = torch.max(pg_loss_1, pg_loss_2).mean()
-    pg_loss = - (torch.log(torch.clamp(ratio, 1 / (1 + clip_coeff), 1 + clip_coeff)) * adv).mean()
+    pg_loss_1 = -(adv * ratio)
+    pg_loss_2 = -torch.clamp(ratio, 1 - clip_coeff, 1 + clip_coeff) * adv
+    pg_loss = torch.max(pg_loss_1, pg_loss_2).mean()
+    # pg_loss = - (torch.log(torch.clamp(ratio, 1 / (1 + clip_coeff), 1 + clip_coeff)) * adv).mean()
     kl = torch.distributions.kl_divergence(pi_tm1, pi_ref).mean().clamp_min(0.)
     entropy = pi_tm1.entropy().mean()
     loss = pg_loss + td_loss - entropy_cost * entropy
     return loss, {
-        "train/loss": loss.detach(),
-        "train/entropy": entropy.detach(),
-        "train/td": td_loss.detach(),
-        "train/pg": pg_loss.detach(),
-        "train/kl": kl.detach(),
-        "train/ratio": ratio.mean().detach(),
+        "train_step/loss": loss.detach(),
+        "train_step/entropy": entropy.detach(),
+        "train_step/td": td_loss.detach(),
+        "train_step/pg": pg_loss.detach(),
+        "train_step/kl": kl.detach(),
+        "train_step/ratio": ratio.mean().detach(),
     }

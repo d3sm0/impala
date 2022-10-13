@@ -18,6 +18,7 @@ class Distributed:
 
     train_device: str = "cuda:0"
     infer_device: str = "cuda:0"
+    eval_device: str = "cpu"
 
 
 @dataclasses.dataclass
@@ -26,6 +27,7 @@ class Evaluation:
     num_rollouts: int = 8
     seed: int = 456
     deterministic_policy: bool = True
+    num_epsisodes: int = 5
 
 
 @dataclasses.dataclass
@@ -40,8 +42,9 @@ class Training:
 # TODO: how to set variables at runtime?
 @dataclasses.dataclass
 class Task:
-    env_id: str = "starpilot"
-    benchmark: str = "procgen"
+    env_id: str = "Pong-v5"
+    benchmark: str = "atari"
+    total_frames: int = 10_000_000  # 25_000_000 for procgen 1_000_000 for dm_control
 
 
 @dataclasses.dataclass
@@ -59,6 +62,7 @@ class Adam(Optimizer):
 
 @dataclasses.dataclass
 class Agent:
+    name: str = "ppo"
     batch_size: int = MISSING
     learning_starts: Optional[int] = MISSING
     rollout_length: int = MISSING
@@ -66,7 +70,7 @@ class Agent:
     entropy_cost: float = 0.
     gamma: float = 0.99
     max_grad_norm: float = 0.5
-    prefetch: int = 2
+    prefetch: int = 4
     model_push_period: int = 8
 
 
@@ -92,6 +96,7 @@ class PPO(Agent):
     learning_starts: int = 1000
 
 
+
 @dataclasses.dataclass
 class Config:
     distributed: Distributed = dataclasses.field(default_factory=Distributed)
@@ -102,5 +107,5 @@ class Config:
     agent: Agent = dataclasses.field(default_factory=PPO)
 
 
-config_store = ConfigStore.instance()
-config_store.store(name="config", node=Config)
+# config_store = ConfigStore.instance()
+# config_store.store(name="config", node=Config)

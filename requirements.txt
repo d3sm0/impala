@@ -1,9 +1,9 @@
-# numpy
-# torch
+# torch==1.12.1+cu111
+numpy
 gym
 wandb
 hydra-core
-functorch
+# functorch
 -e git+https://github.com/d3sm0/RLego.git#egg=rlego
 -e git+https://github.com/d3sm0/experiment_buddy#egg=experiment_buddy
 envpool

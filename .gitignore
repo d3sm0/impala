@@ -6,6 +6,5 @@ runs
 wandb
 logs
 # outputs
-conf
 simple
 __pycache__
