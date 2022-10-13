@@ -1,7 +1,6 @@
 # import functorch
 import rlego
 import torch
-from rlmeta.utils import nested_utils
 
 import models.distributed_models
 
@@ -90,43 +89,41 @@ def ppo_loss_is(batch, model, entropy_cost=0.01, clip_coeff=0.1, lambda_=0.95, g
     }
 
 
-def pre_process(batch, gamma=0.99, device="cpu"):
-    s, a, r, s1, d, pi_ref = batch
-    not_done = torch.logical_not(d)
-    # TODO: what if the first state now is done?
-    # mask = (torch.ones_like(d)) *(not_done).roll(shifts=1, dims=1)
-    discount_t = not_done * gamma  # * mask * gamma
-    return nested_utils.map_nested(lambda x: x.to(device).squeeze(-1), (s, a, r, s1, discount_t, pi_ref))
-
-
 def impala_loss(batch, model, lambda_=1., entropy_cost=0.01):
-    s, a, r, s1, discount_t, pi_ref = batch
+    s, a, r, discount_t, pi_ref = batch
     pi_tm1, v_tm1 = model(s)
-    pi_tm1 = torch.distributions.Categorical(logits=pi_tm1)
-    pi_ref = torch.distributions.Categorical(logits=pi_ref)
-    ratio = torch.exp(pi_tm1.log_prob(a) - pi_ref.log_prob(a))
+    # pi_tm1 = torch.distributions.Categorical(logits=pi_tm1)
+    # pi_ref = torch.distributions.Categorical(logits=pi_ref)
+    # ratio = torch.exp(pi_tm1.log_prob(a.squeeze(dim=-1)) - pi_ref.log_prob(a.squeeze(dim=-1)))
+    a = a.squeeze(dim=-1)
+    ratio = torch.ones_like(r).squeeze().float()
 
-    with torch.no_grad():
-        v_t = model(s1[-1:])[1].squeeze(-1)
-        v_t = torch.cat([v_tm1[1:].squeeze(-1), v_t], dim=0)
-    adv, err, _ = rlego.vtrace_td_error_and_advantage(v_tm1.squeeze(-1), v_t, r, discount_t, ratio.detach(), lambda_=lambda_)
+    # with torch.no_grad():
+    #    v_t = model(s[-1:])[1].squeeze(-1)
+    #    v_t = torch.cat([v_tm1[1:].squeeze(-1), v_t], dim=0)
+
+    v_t = v_tm1.squeeze(-1).detach()
+    adv, err, _ = rlego.vtrace_td_error_and_advantage(v_tm1.squeeze(-1), v_t.squeeze(dim=-1), r.squeeze(dim=-1),
+                                                      discount_t.squeeze(dim=-1), ratio.detach(),
+                                                      lambda_=lambda_)
     td_loss = 0.5 * err.pow(2).mean()
 
     # pg_loss_1 = -(adv * ratio)
     # pg_loss_2 = -torch.clamp(ratio, 1 - clip_coeff, 1 + clip_coeff) * adv
     # pg_loss = torch.max(pg_loss_1, pg_loss_2).mean()
     # pg_loss = - (torch.log(torch.clamp(ratio, 1 / (1 + clip_coeff), 1 + clip_coeff)) * adv).mean()
-    pg_loss = -(pi_tm1.log_prob(a) * adv).mean()
+    # pg_loss = -(pi_tm1.log_prob(a.squeeze(dim=-1)) * adv).sum()
+    pg_loss = - (pi_tm1.gather(1, a.unsqueeze(dim=-1)).squeeze(dim=-1) * adv).sum()
 
-    kl = torch.distributions.kl_divergence(pi_tm1, pi_ref).mean().clamp_min(0.)
-    entropy = pi_tm1.entropy().mean()
-    loss = pg_loss + td_loss - entropy_cost * entropy
+    # kl = torch.distributions.kl_divergence(pi_tm1, pi_ref).mean().clamp_min(0.)
+    # entropy = pi_tm1.entropy().mean()
+    loss = pg_loss + td_loss  # - entropy_cost * entropy
     return loss, {
         "train/loss": loss.detach(),
-        "train/entropy": entropy.detach(),
+        # "train/entropy": entropy.detach(),
         "train/td": td_loss.detach(),
         "train/pg": pg_loss.detach(),
-        "train/kl": kl.detach(),
+        # "train/kl": kl.detach(),
         "train/ratio": ratio.mean().detach(),
     }
 
@@ -152,6 +149,7 @@ def ppo_loss(model, batch, entropy_cost=0.01, clip_coeff=0.1):
         "train_step/entropy": entropy.detach(),
         "train_step/td": td_loss.detach(),
         "train_step/pg": pg_loss.detach(),
+        "train_step/target": v_target.mean().detach(),
         "train_step/kl": kl.detach(),
         "train_step/ratio": ratio.mean().detach(),
     }

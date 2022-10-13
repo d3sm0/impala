@@ -1,8 +1,15 @@
 import contextlib
 import random
 import time
+from typing import Optional, Tuple
 
-# import aim
+from rlmeta.core import remote
+
+try:
+    import aim
+except ImportError:
+    print(f"aim not available")
+    pass
 import numpy as np
 import torch
 from rlmeta.agents.agent import AgentFactory
@@ -18,7 +25,7 @@ from rlmeta.envs.env import EnvFactory
 
 from configs.config import Config
 
-TIMEOUT = 120
+TIMEOUT = 360
 
 
 @contextlib.contextmanager
@@ -39,6 +46,12 @@ def set_seed(seed):
     random.seed(seed)
 
 
+class DebugBuffer(ReplayBuffer):
+    @remote.remote_method(None)
+    def debug_info(self) -> Tuple[int, int, int]:
+        return self._storage.capacity, self._storage.size, self._storage._impl.cursor
+
+
 class Run:
     def __init__(self, disabled=False):
         if disabled:
@@ -50,24 +63,18 @@ class Run:
     def save(self, *args, **kwargs):
         pass
 
-    def log(self, metrics, step):
+    def log(self, metrics, step=None):
         for k, v in metrics.items():
             self.run.track(v, k, step=step)
 
-    def add_figures(self, figures, step):
+    def add_figures(self, figures, step=None):
         for k, v in figures.items():
             self.run.track(aim.Figure(v), k, step=step)
 
-    def __del__(self):
-        self.run.finalize()
-
 
 class Writer:
-    def __init__(self, disabled):
+    def __init__(self, disabled=False):
         self.run = Run(disabled)
-
-    def __del__(self):
-        del self.run
 
 
 class RecordMetrics(EpisodeCallbacks):
@@ -83,7 +90,7 @@ class RecordMetrics(EpisodeCallbacks):
 def create_master(cfg: Config, ctrl: Controller, train_model: RemotableModel, rb: ReplayBuffer):
     assert train_model.training is True
     a_rb = RemoteReplayBuffer(rb, cfg.distributed.r_server_name, cfg.distributed.r_server_addr, timeout=TIMEOUT,
-                              prefetch=cfg.agent.prefetch)
+                              prefetch=cfg.training.prefetch)
     async_ctrl = Remote(ctrl, cfg.distributed.c_server_name, cfg.distributed.c_server_addr, timeout=TIMEOUT)
     async_model = DownstreamModel(train_model, cfg.distributed.m_server_name, cfg.distributed.m_server_addr,
                                   timeout=TIMEOUT)
@@ -103,14 +110,15 @@ def create_servers(cfg: Config, ctrl: Controller, model: RemotableModel, rb: Rep
     return servers
 
 
-def create_workers(cfg: Config, ctrl: Controller, infer_model: RemotableModel, rb: ReplayBuffer):
+def create_workers(cfg: Config, ctrl: Controller, infer_model: RemotableModel, rb: Optional[ReplayBuffer] = None):
     # this actions happens in the worker machine
-    evaluate_model = Remote(infer_model, cfg.distributed.m_server_name, cfg.distributed.m_server_addr, timeout=TIMEOUT)
     infer_model = Remote(infer_model, cfg.distributed.m_server_name, cfg.distributed.m_server_addr, timeout=TIMEOUT)
-    train_rb = RemoteReplayBuffer(rb, cfg.distributed.r_server_name, cfg.distributed.r_server_addr, timeout=TIMEOUT)
     train_ctrl = Remote(ctrl, cfg.distributed.c_server_name, cfg.distributed.c_server_addr, timeout=TIMEOUT)
-    evaluate_ctrl = Remote(ctrl, cfg.distributed.c_server_name, cfg.distributed.c_server_addr, timeout=TIMEOUT)
-    return evaluate_ctrl, evaluate_model, train_ctrl, infer_model, train_rb
+    train_rb = None
+    if rb is not None:
+        train_rb = RemoteReplayBuffer(rb, cfg.distributed.r_server_name, cfg.distributed.r_server_addr, timeout=TIMEOUT,
+                                      prefetch=cfg.training.prefetch)
+    return train_ctrl, infer_model, train_rb
 
 
 def create_train_loop(cfg: Config, env_fac: EnvFactory, agent_factory: AgentFactory, train_ctrl: Controller):
@@ -122,7 +130,7 @@ def create_train_loop(cfg: Config, env_fac: EnvFactory, agent_factory: AgentFact
                               num_workers=cfg.training.num_workers,
                               num_rollouts=cfg.training.num_rollouts,
                               seed=cfg.training.seed,
-                              episode_callbacks=RecordMetrics(),
+                              # episode_callbacks=RecordMetrics(),
                               )
     return train_loop
 
@@ -137,6 +145,6 @@ def create_evaluation_loops(cfg: Config, env_factory: EnvFactory, agent_factory:
                                  num_rollouts=cfg.evaluation.num_workers,
                                  num_workers=cfg.evaluation.num_rollouts,
                                  seed=cfg.evaluation.seed,
-                                 episode_callbacks=RecordMetrics(),
+                                 # episode_callbacks=RecordMetrics(),
                                  )
     return evaluate_loop

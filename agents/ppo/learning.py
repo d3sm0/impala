@@ -15,11 +15,12 @@ from rlmeta.core.types import Action, TimeStep
 from rlmeta.core.types import NestedTensor
 
 import losses
+import models.models
 from agents.core import Actor, Learner
 
 
-class PPOActor(Actor):
-    def __init__(self, model: ModelLike,
+class PPOActorRemote(Actor):
+    def __init__(self, model: models.models.AtariActorCritic,
                  replay_buffer: ReplayBufferLike,
                  deterministic_policy: bool = False,
                  gamma: float = 0.99,
@@ -33,11 +34,6 @@ class PPOActor(Actor):
         self._replay_buffer = replay_buffer
         self._trajectory = moolib.Batcher(rollout_length, dim=0, device="cpu")
         self._last_transition = None
-
-    def act(self, timestep: TimeStep) -> Action:
-        obs = timestep.observation
-        action, logpi, v = self._model.act(obs, self._deterministic_policy)
-        return Action(action, info={"logpi": logpi, "v": v})
 
     async def async_act(self, timestep: TimeStep) -> Action:
         obs = timestep.observation
@@ -74,7 +70,7 @@ class PPOActor(Actor):
         mask = torch.ones_like(not_done) * not_done.roll(1, dims=(0,))
         discount_t = (mask * not_done) * self._gamma
         target_t = rlego.lambda_returns(r, discount_t, values.squeeze(-1)[1:], self._lambda)  # noqa
-        return nested_utils.unbatch_nested(lambda x: x, (s, a, target_t, pi_ref), target_t.shape[0])
+        return nested_utils.unbatch_nested(lambda x: x.unsqueeze(1), (s, a, target_t, pi_ref), target_t.shape[0])
 
     async def _async_make_replay(self) -> List[NestedTensor]:
         return self._make_replay()
@@ -114,23 +110,32 @@ class PPOLearner(Learner):
         return self._device
 
     def prepare(self):
-        self._replay_buffer.warm_up(self._learning_starts)
+        if not self.can_train:
+            self._replay_buffer.warm_up(self._learning_starts)
+        self.can_train = True
 
     def train_step(self):
-        t0 = time.time()
+        t0 = time.perf_counter()
         _, batch, _ = self._replay_buffer.sample(self._batch_size)
-        t1 = time.time()
+        batch = nested_utils.map_nested(lambda x: x.to(self.device()), batch)
+        t1 = time.perf_counter()
         metrics = self._train_step(batch)
-        t2 = time.time()
+        t2 = time.perf_counter()
         self._step_counter += 1
+        update_time = 0
         if self._step_counter % self._model_push_period == 0:
+            start = time.perf_counter()
             self._model.push()
-        metrics["debug/replay_buffer_dt"] = (t1 - t0) * 1000
+            update_time = (time.perf_counter() - start) * 1000
+        metrics["debug/replay_sample_per_second"] = (self._batch_size / ((t1 - t0) * 1000))
+        metrics["debug/gradient_per_second"] = (self._batch_size / ((t2 - t1) * 1000))
+        metrics["debug/total_time"] = (time.perf_counter() - t0) * 1000
         metrics["debug/forward_dt"] = (t2 - t1) * 1000
+        metrics["debug/update_time"] = update_time
         return metrics
 
     def _train_step(self, batch: NestedTensor) -> Dict[str, float]:
-        s, a, v_target, pi_ref = nested_utils.map_nested(lambda x: x.to(self.device()), batch)
+        s, a, v_target, pi_ref = batch
         loss, metrics = losses.ppo_loss(self._model, (s, a, v_target, pi_ref), entropy_cost=self._entropy_coeff)
 
         loss.backward()
