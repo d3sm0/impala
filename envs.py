@@ -108,7 +108,7 @@ def make_atari(task_id, batch_size=1, seed=33, async_envs=False):
     num_envs = batch_size
     if async_envs:
         num_envs = batch_size * 3
-    env = envpool.make_gym(task_id, batch_size=batch_size, num_envs=num_envs, seed=seed)
+    env = envpool.make_gym(task_id, batch_size=batch_size, num_envs=num_envs, seed=seed, reward_clip=True)
     env.is_vector_env = True
     env.num_envs = batch_size
     env = AtariWrap(env)

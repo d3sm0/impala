@@ -12,14 +12,16 @@ import omegaconf
 import rlmeta.utils.hydra_utils as hydra_utils
 import torch.multiprocessing as mp
 import wandb
-from rlmeta.core.controller import Controller
+from rlmeta.core.controller import Controller, Phase
 from rlmeta.core.loop import LoopList
 
 import envs
 import utils
 from agents.distributed_agent import DistributedAgent
-# from agents.dqn.builder import ApexDQNBuilder
 from agents.ppo.builder import PPOBuilder
+
+
+# from agents.ppo.builder import PPOBuilder
 
 
 # from agents.impala.builder import ImpalaBuilder
@@ -29,7 +31,6 @@ from agents.ppo.builder import PPOBuilder
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
-
 
 @hydra.main(version_base=None, config_path="./conf", config_name="config")
 def main(cfg):
@@ -77,6 +78,9 @@ def main(cfg):
         agent.eval(cfg.evaluation.num_rollouts, keep_training_loops=True)
         time.sleep(0.1)
         agent.train(cfg.training.steps_per_epoch)
+        episode_length = a_ctrl.stats(Phase.TRAIN)['episode_length'].dict()
+        if episode_length['count'] * episode_length['mean'] > cfg.task.total_frames:
+            break
     loops.terminate()
     servers.terminate()
 
