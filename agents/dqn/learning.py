@@ -15,7 +15,7 @@ from agents.core import Actor, Learner
 class ApexActor(Actor):
     def __init__(self, model: ModelLike, replay_buffer: Optional[ReplayBufferLike] = None,
                  eps: float = 0.4,
-                 n_step: int = 3,
+                 n_step: int = 5,
                  rollout_length: int = 100,
                  gamma: float = 0.99):
         self._model = model
@@ -101,20 +101,32 @@ class ApexLearner(Learner):
 
     def train_step(self):
         # TODO: the first step takes 20x  longer than the rest. why?
-        t0 = time.time()
+        t0 = time.perf_counter()
         keys, batch, priorities = self._replay_buffer.sample(self._batch_size)
-        t1 = time.time()
+        batch = nested_utils.map_nested(lambda x: x.to(self._device), batch)
+        t1 = time.perf_counter()
         metrics = self._train_step(keys, batch, priorities)
-        t2 = time.time()
-
+        t2 = time.perf_counter()
         self._step_counter += 1
+
+        target_time = 0
         if self._step_counter % self._target_sync_period == 0:
+            target_time = time.perf_counter()
             self._model.sync_target_net()
+            target_time = time.perf_counter() - target_time
+        update_time = 0
 
         if self._step_counter % self._model_push_period == 0:
+            start_time = time.perf_counter()
             self._model.push()
-        metrics["debug/replay_buffer_dt"] = (t1 - t0) * 1000
+            update_time = time.perf_counter() - start_time
+
+        metrics["debug/replay_sample_per_second"] = self._batch_size / ((t1 - t0) * 1000)
         metrics["debug/forward_dt"] = (t2 - t1) * 1000
+        metrics["debug/update_time"] = update_time
+        metrics["debug/target_sync_time"] = target_time
+        metrics["debug/gradient_per_second"] = (self._batch_size / ((t2 - t0) * 1000))
+        metrics["debug/total_time"] = (time.perf_counter() - t0) * 1000
         return metrics
 
     def prepare(self):
@@ -124,9 +136,8 @@ class ApexLearner(Learner):
 
     def _train_step(self, keys: torch.Tensor, batch: NestedTensor,
                     probabilities: torch.Tensor) -> Dict[str, float]:
-        obs, action, target = nested_utils.map_nested(lambda x: x.to(self._device), batch)
         self._optimizer.zero_grad()
-
+        obs, action, target = batch
         q = self._model(obs)
         q = q.gather(1, action.unsqueeze(-1)).squeeze(-1)
 
@@ -146,9 +157,11 @@ class ApexLearner(Learner):
         priorities = (target - q).squeeze(-1).abs().cpu()
 
         # Wait for previous update request
+        priority_update_time = 0
         if self._update_priorities_future is not None:
-            # print ("Waiting for previous update")
+            t0 = time.perf_counter()
             self._update_priorities_future.wait()
+            priority_update_time = (time.perf_counter() - t0) * 1000
 
         # Async update to start next training step when waiting for updating
         # priorities.
@@ -161,4 +174,5 @@ class ApexLearner(Learner):
             "train_step/priorities": priorities.detach().mean().item(),
             "train_step/loss": loss.detach().mean().item(),
             "train_step/grad_norm": grad_norm.detach().mean().item(),
+            "debug/priority_update_time": priority_update_time,
         }

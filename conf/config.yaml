@@ -1,5 +1,5 @@
 defaults:
-  - agent: ppo
+  - agent: apex
   - override hydra/hydra_logging: disabled
   - override hydra/job_logging: disabled
 
@@ -26,7 +26,7 @@ distributed:
 task:
   env_id: "Breakout-v5"
   benchmark: "atari"
-  total_frames: 10000000 # 10M samples i.e. 40M frames
+  total_frames: 100000000 # 10M samples i.e. 40M frames
 
 evaluation:
   num_workers: 1
@@ -36,11 +36,11 @@ evaluation:
   num_episodes: 1
 
 training:
-  num_workers: 32
-  num_rollouts: 64
+  num_workers: 28
+  num_rollouts: 56
   seed: 123
   num_epochs: 1000
-  steps_per_epoch: 3000
+  steps_per_epoch: 5000
 
 
 optimizer:
