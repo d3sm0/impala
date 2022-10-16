@@ -3,11 +3,10 @@ from typing import Callable, Optional
 
 import torch
 from _rlmeta_extension import PrioritizedSampler
-
 from rlmeta.agents.agent import AgentFactory
 from rlmeta.core.model import ModelLike
 from rlmeta.core.replay_buffer import ReplayBufferLike, ReplayBuffer
-from rlmeta.storage import TensorCircularBuffer
+from rlmeta.storage import  CircularBuffer
 
 from agents.core import Builder
 from agents.dqn.learning import ApexActor, ApexLearner
@@ -21,10 +20,12 @@ class ApexDQNAgentFactory(AgentFactory):
             model: ModelLike,
             eps_func: Callable[[int], float],
             replay_buffer: Optional[ReplayBufferLike] = None,
+            **kwargs,
     ) -> None:
         self._model = model
         self._eps_func = eps_func
         self._replay_buffer = replay_buffer
+        self._kwargs = kwargs
 
     def __call__(self, index: int) -> ApexActor:
         model = self._make_arg(self._model, index)
@@ -34,8 +35,8 @@ class ApexDQNAgentFactory(AgentFactory):
             model,
             replay_buffer,
             eps,
+            **self._kwargs
         )
-
 
 
 class ConstantEpsFunc:
@@ -68,7 +69,7 @@ class ApexDQNBuilder(Builder):
 
     def make_replay(self):
         rb = ReplayBuffer(
-            TensorCircularBuffer(self.cfg.agent.replay_buffer_size),
+            CircularBuffer(self.cfg.agent.replay_buffer_size, collate_fn=torch.cat),
             PrioritizedSampler(priority_exponent=self.cfg.agent.priority_exponent))
         return rb
 
@@ -77,7 +78,7 @@ class ApexDQNBuilder(Builder):
             eps_func = ConstantEpsFunc(self.cfg.agent.eval_eps)
         else:
             eps_func = FlexibleEpsFunc(self.cfg.agent.train_eps, self.cfg.training.num_rollouts)
-        return ApexDQNAgentFactory(model, eps_func, rb)
+        return ApexDQNAgentFactory(model, eps_func, rb, n_step=self.cfg.agent.n_step, rollout_length=self.cfg.agent.rollout_length)
 
     def make_learner(self, model: ModelLike, rb: ReplayBufferLike):
         optimizer = torch.optim.Adam(self._learner_model.parameters(), lr=self.cfg.optimizer.lr,

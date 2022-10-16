@@ -10,7 +10,7 @@ import hydra
 import omegaconf
 import rlmeta.utils.hydra_utils as hydra_utils
 import torch.multiprocessing as mp
-from rlmeta.core.controller import Controller, Phase
+from rlmeta.core.controller import Controller
 from rlmeta.core.loop import LoopList
 
 import envs
@@ -21,8 +21,6 @@ from agents.dqn.builder import ApexDQNBuilder
 
 
 # from agents.ppo.builder import PPOBuilder
-
-
 # from agents.impala.builder import ImpalaBuilder
 
 
@@ -56,7 +54,7 @@ def main(cfg):
     e_ctrl, e_model, _ = utils.create_workers(cfg, ctrl, builder.actor_model)
 
     e_agent_fac = builder.make_actor(e_model, deterministic=True)
-    evaluate_loop = utils.create_evaluation_loops(cfg, env_factory, e_agent_fac, e_ctrl)
+    evaluate_loop = utils.create_evaluation_loops(cfg, envs.EnvFactory(cfg.task.env_id, train=False), e_agent_fac, e_ctrl)
 
     loops = LoopList([train_loop, evaluate_loop])
 
@@ -68,10 +66,9 @@ def main(cfg):
     servers.start()
     loops.start()
     agent.connect()
-    agent._controller.set_phase(Phase.TRAIN)
     for epoch in range(cfg.training.num_epochs):
-        agent.eval(cfg.evaluation.num_rollouts, keep_training_loops=True)
         total_samples = agent.train(cfg.training.steps_per_epoch)
+        agent.eval(cfg.evaluation.num_rollouts, keep_training_loops=True)
         if total_samples > cfg.task.total_frames:
             break
     loops.terminate()

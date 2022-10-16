@@ -114,23 +114,32 @@ class PPOLearner(Learner):
         return self._device
 
     def prepare(self):
-        self._replay_buffer.warm_up(self._learning_starts)
+        if not self.can_train:
+            self._replay_buffer.warm_up(self._learning_starts)
+        self.can_train = True
 
     def train_step(self):
-        t0 = time.time()
+        t0 = time.perf_counter()
         _, batch, _ = self._replay_buffer.sample(self._batch_size)
-        t1 = time.time()
+        batch = nested_utils.map_nested(lambda x: x.to(self.device()), batch)
+        t1 = time.perf_counter()
         metrics = self._train_step(batch)
-        t2 = time.time()
+        t2 = time.perf_counter()
         self._step_counter += 1
+        update_time = 0
         if self._step_counter % self._model_push_period == 0:
+            start = time.perf_counter()
             self._model.push()
-        metrics["debug/replay_buffer_dt"] = (t1 - t0) * 1000
+            update_time = (time.perf_counter() - start) * 1000
+        metrics["debug/replay_sample_per_second"] = (self._batch_size / ((t1 - t0) * 1000))
+        metrics["debug/gradient_per_second"] = (self._batch_size / ((t2 - t1) * 1000))
+        metrics["debug/total_time"] = (time.perf_counter() - t0) * 1000
         metrics["debug/forward_dt"] = (t2 - t1) * 1000
+        metrics["debug/update_time"] = update_time
         return metrics
 
     def _train_step(self, batch: NestedTensor) -> Dict[str, float]:
-        s, a, v_target, pi_ref = nested_utils.map_nested(lambda x: x.to(self.device()), batch)
+        s, a, v_target, pi_ref = batch
         loss, metrics = losses.ppo_loss(self._model, (s, a, v_target, pi_ref), entropy_cost=self._entropy_coeff)
 
         loss.backward()

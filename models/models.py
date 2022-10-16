@@ -50,7 +50,8 @@ class ImpalaActorCritic(nn.Module):
 class AtariDQN(nn.Module):
     def __init__(self, obs_dim: Tuple[int, ...], action_dim: int, h_dim=512):
         super().__init__()
-        self.body = AtariBody((4,), action_dim)
+        self.body = AtariBody(obs_dim)
+        # self.body = ImpalaCNN(obs_dim, d_model=h_dim)
         self.q = layer_init_normed(nn.Linear(h_dim, action_dim))
         self.v = layer_init_normed(nn.Linear(h_dim, 1))
 
@@ -233,7 +234,7 @@ class ConvSequence(nn.Module):
 class ImpalaCNN(nn.Module):
     def __init__(self, input_shape, d_model: int = 256):
         super(ImpalaCNN, self).__init__()
-        h, w, c = input_shape
+        c, h, w = input_shape
         shape = (c, h, w)
         conv_seqs = []
         chans = [16, 32, 32]

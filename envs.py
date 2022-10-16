@@ -110,9 +110,14 @@ def make_atari(task_id, batch_size=1, seed=33, async_envs=False, train: bool = T
     if async_envs:
         num_envs = batch_size * 3
     reward_clip = False
+    episodic_life = False
     if train:
         reward_clip = True
-    env = envpool.make_gym(task_id, batch_size=batch_size, num_envs=num_envs, seed=seed, reward_clip=reward_clip)
+        episodic_life = True
+    env = envpool.make_gym(task_id, batch_size=batch_size, num_envs=num_envs, seed=seed, reward_clip=reward_clip,
+                           episodic_life=episodic_life)
+
+    # env.observation_space = gym.spaces.Box(0, 255, (84, 84, 4), dtype=np.uint8)
     # env.is_vector_env = True
     # env.num_envs = batch_size
     # env = AtariWrap(env)

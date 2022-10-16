@@ -34,7 +34,7 @@ class AtariPPOModel(RemotableModel):
 
 class AtariDQNModel(RemotableModel):
 
-    def __init__(self, observation_space: Tuple[int], action_dim: int) -> None:
+    def __init__(self, observation_space: Tuple[int, ...], action_dim: int) -> None:
         super().__init__()
         self.online_net = models.AtariDQN(observation_space, action_dim)
         self.target_net = copy.deepcopy(self.online_net)

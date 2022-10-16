@@ -15,7 +15,7 @@ from agents.core import Actor, Learner
 class ApexActor(Actor):
     def __init__(self, model: ModelLike, replay_buffer: Optional[ReplayBufferLike] = None,
                  eps: float = 0.4,
-                 n_step: int = 5,
+                 n_step: int = 3,
                  rollout_length: int = 100,
                  gamma: float = 0.99):
         self._model = model
@@ -61,7 +61,7 @@ class ApexActor(Actor):
         target = rlego.n_step_bootstrapped_returns(r_t, discount_t, q_star_t[1:].squeeze(dim=-1), n=self._n_step)
         # priorities = (target - q_pi_t[:-1].squeeze(dim=-1)).abs()
         priorities = (target - q_pi_t[:-1].squeeze(dim=-1)).abs()
-        return nested_utils.unbatch_nested(lambda x: x, (s_tm1, a_t, target), target.shape[0]), priorities
+        return nested_utils.unbatch_nested(lambda x: x.unsqueeze(1), (s_tm1, a_t, target), target.shape[0]), priorities
 
 
 class ApexLearner(Learner):
