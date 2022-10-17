@@ -2,7 +2,6 @@ import time
 from typing import Optional, Tuple, List, Dict
 
 import moolib
-import rlego
 import torch
 from rlmeta.core.model import ModelLike
 from rlmeta.core.replay_buffer import ReplayBufferLike
@@ -10,6 +9,7 @@ from rlmeta.core.types import TimeStep, Action, NestedTensor
 from rlmeta.utils import nested_utils
 
 from agents.core import Actor, Learner
+from models.quantile_layers import quantile_loss
 
 
 class ApexActor(Actor):
@@ -51,6 +51,16 @@ class ApexActor(Actor):
         replay, priorities = self._make_replay()
         await self._replay_buffer.async_extend(replay, priorities)
 
+    # def _make_replay(self) -> Tuple[List[NestedTensor], torch.Tensor]:
+    #     # TODO : this very likely is buggy make a test for it
+    #     s_tm1, a_t, r_t, d_t, q_pi_t, q_star_t = self._trajectory.get()
+    #     s_tm1, a_t, r_t, d_t = nested_utils.map_nested(lambda x: x.squeeze(-1)[:-1], (s_tm1, a_t, r_t, d_t))
+    #     not_done = torch.logical_not(d_t)
+    #     discount_t = (not_done.roll(1, dims=0) * torch.ones_like(not_done)) * self._gamma
+    #     # replace the last element with q_star
+    #     target = rlego.n_step_bootstrapped_returns(r_t, discount_t, q_star_t[1:].squeeze(dim=-1), n=self._n_step)
+    #     priorities = (target - q_pi_t[:-1].squeeze(dim=-1)).abs()
+    #     return nested_utils.unbatch_nested(lambda x: x.unsqueeze(1), (s_tm1, a_t, target), target.shape[0]), priorities
     def _make_replay(self) -> Tuple[List[NestedTensor], torch.Tensor]:
         # TODO : this very likely is buggy make a test for it
         s_tm1, a_t, r_t, d_t, q_pi_t, q_star_t = self._trajectory.get()
@@ -58,8 +68,9 @@ class ApexActor(Actor):
         not_done = torch.logical_not(d_t)
         discount_t = (not_done.roll(1, dims=0) * torch.ones_like(not_done)) * self._gamma
         # replace the last element with q_star
-        target = rlego.n_step_bootstrapped_returns(r_t, discount_t, q_star_t[1:].squeeze(dim=-1), n=self._n_step)
-        priorities = (target - q_pi_t[:-1].squeeze(dim=-1)).abs()
+        # target = rlego.n_step_bootstrapped_returns(r_t, discount_t, q_star_t[1:].squeeze(dim=-1), n=self._n_step)
+        target = r_t[:, None] + discount_t[:, None] * q_star_t[1:].squeeze(dim=-1)
+        priorities = (target.mean(1) - q_pi_t[:-1].squeeze(dim=-1)).abs()
         return nested_utils.unbatch_nested(lambda x: x.unsqueeze(1), (s_tm1, a_t, target), target.shape[0]), priorities
 
 
@@ -150,6 +161,48 @@ class ApexLearner(Learner):
                                                    self._max_grad_norm)
         self._optimizer.step()
         priorities = (target - q).squeeze(-1).abs().cpu()
+
+        # Wait for previous update request
+        priority_update_time = 0
+        if self._update_priorities_future is not None:
+            t0 = time.perf_counter()
+            self._update_priorities_future.wait()
+            priority_update_time = (time.perf_counter() - t0) * 1000
+
+        # Async update to start next training step when waiting for updating
+        # priorities.
+        self._update_priorities_future = self._replay_buffer.async_update(
+            keys, priorities)
+
+        return {
+            "train_step/q": q.mean().item(),
+            "train_step/target": target.mean().item(),
+            "train_step/priorities": priorities.detach().mean().item(),
+            "train_step/loss": loss.detach().mean().item(),
+            "train_step/grad_norm": grad_norm.detach().mean().item(),
+            "debug/priority_update_time": priority_update_time,
+        }
+
+
+class DistributionalApex(ApexLearner):
+
+    def _train_step(self, keys: torch.Tensor, batch: NestedTensor,
+                    probabilities: torch.Tensor) -> Dict[str, float]:
+        self._optimizer.zero_grad()
+        obs, action, target = batch
+        q, taus = self._model(obs)
+        q = q.gather(dim=-1, index=action.unsqueeze(1).expand(taus.shape).unsqueeze(-1)).squeeze(-1)
+
+        probabilities = probabilities.to(dtype=q.dtype, device=self._device)
+        weight = probabilities.pow(-self._importance_sampling_exponent)
+        weight.div_(weight.max())
+
+        loss = quantile_loss(target, q, taus).mul(weight).mean()
+        loss.backward()
+        grad_norm = torch.nn.utils.clip_grad_norm_(self._model.parameters(),
+                                                   self._max_grad_norm)
+        self._optimizer.step()
+        priorities = (target - q).mean(dim=-1).squeeze(-1).abs().cpu()
 
         # Wait for previous update request
         priority_update_time = 0

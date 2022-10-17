@@ -52,17 +52,24 @@ class ImpalaActorCritic(nn.Module):
 class DistributionalDQN(nn.Module):
     def __init__(self, obs_dim: Tuple[int, ...], action_dim: int, h_dim=512, tau_samples=32):
         super().__init__()
-        self.body = AtariBody(obs_dim, h_dim, project=False)
-        # self.body = ImpalaCNNLarge(obs_dim, d_model=h_dim)
-        self.q = ImplicitQuantileHead(7 * 7 * 64, h_dim, action_dim)
+
+        self.body = nn.Sequential(
+            layer_init(nn.Conv2d(4, 32, 8, stride=4)),
+            nn.ReLU(),
+            layer_init(nn.Conv2d(32, 64, 4, stride=2)),
+            nn.ReLU(),
+            layer_init(nn.Conv2d(64, 64, 3, stride=1)),
+            nn.ReLU(),
+            nn.Flatten(),
+        )
+        self.q = ImplicitQuantileHead(7 * 7 * 64, action_dim, d_model=h_dim)
         self.tau_samples = tau_samples
-        self.v = layer_init_normed(nn.Linear(h_dim, 1))
 
     def forward(self, s):
         h = self.body(s / 255.)
         taus = torch.rand(size=(self.tau_samples, h.shape[0]), device=h.device)
         q = self.q(h, taus)
-        return q, taus
+        return q.transpose(0, 1), taus.transpose(0, 1)
 
 
 class AtariDQN(nn.Module):

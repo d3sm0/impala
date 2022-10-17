@@ -9,8 +9,8 @@ from rlmeta.core.replay_buffer import ReplayBufferLike, ReplayBuffer
 from rlmeta.storage import CircularBuffer
 
 from agents.core import Builder
-from agents.dqn.learning import ApexActor, ApexLearner
-from models import AtariDQNModel
+from agents.dqn.learning import ApexActor, ApexLearner, DistributionalApex
+from models import AtariDQNModel, DistributionalAtariDQN
 
 
 class ApexDQNAgentFactory(AgentFactory):
@@ -86,7 +86,7 @@ class ApexDQNBuilder(Builder):
                                      eps=self.cfg.optimizer.eps)
 
         # optimizer = torch.optim.RMSprop(self._learner_model.parameters(), lr=0.00025 / 4, alpha=0.95, eps=1.5e-7)
-        learner = ApexLearner(
+        learner = DistributionalApex(
             model,
             replay_buffer=rb,
             optimizer=optimizer,
@@ -95,7 +95,7 @@ class ApexDQNBuilder(Builder):
         return learner
 
     def make_network(self, env_spec):
-        model = AtariDQNModel(env_spec.observation_space.shape, env_spec.action_space.n).to(
+        model = DistributionalAtariDQN(env_spec.observation_space.shape, env_spec.action_space.n).to(
             self.cfg.distributed.train_device)
         self._learner_model = model
         actor_model = copy.deepcopy(model).to(self.cfg.distributed.infer_device)
