@@ -1,3 +1,4 @@
+import time
 from typing import Dict, List, Optional
 
 import moolib
@@ -109,15 +110,26 @@ class ImpalaLearner(Learner):
         self._replay_buffer.warm_up(self._learning_starts)
 
     def train_step(self):
+        t0 = time.perf_counter()
         _, batch, _ = self._replay_buffer.sample(self._batch_size)
+        batch = nested_utils.map_nested(lambda x: x.to(self.device()).squeeze(dim=-1), batch)
+        t1 = time.perf_counter()
         metrics = self._train_step(batch)
+        t2 = time.perf_counter()
+        update_time = 0
         self._step_count += 1
         if self._step_count % self._model_push_period == 0:
+            start  = time.perf_counter()
             self._model.push()
+            update_time = time.perf_counter() - start
+        metrics["debug/replay_sample_per_second"] = (self._batch_size / ((t1 - t0) * 1000))
+        metrics["debug/gradient_per_second"] = (self._batch_size / ((t2 - t1) * 1000))
+        metrics["debug/total_time"] = (time.perf_counter() - t0) * 1000
+        metrics["debug/forward_dt"] = (t2 - t1) * 1000
+        metrics["debug/update_time"] = update_time
         return metrics
 
     def _train_step(self, batch: NestedTensor) -> Dict[str, float]:
-        batch = nested_utils.map_nested(lambda x: x.to(self.device()).squeeze(dim=-1), batch)
         self._optimizer.zero_grad()
         metrics = {}
         for b in nested_utils.unbatch_nested(lambda x: x, batch, self._batch_size):

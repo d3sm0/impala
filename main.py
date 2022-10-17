@@ -18,6 +18,7 @@ import utils
 import wandb
 from agents.distributed_agent import DistributedAgent
 from agents.dqn.builder import ApexDQNBuilder
+from agents.impala.builder import ImpalaBuilder
 
 
 # from agents.ppo.builder import PPOBuilder

@@ -2,11 +2,11 @@ import copy
 from typing import Optional
 
 import torch
-from _rlmeta_extension import UniformSampler
+from rlmeta.samplers import UniformSampler
 from rlmeta.agents.agent import AgentFactory
 from rlmeta.core.model import ModelLike
 from rlmeta.core.replay_buffer import ReplayBuffer, ReplayBufferLike
-from rlmeta.storage import TensorCircularBuffer
+from rlmeta.storage import CircularBuffer
 
 from agents.core import Actor, Builder
 from agents.ppo.learning import PPOActor, PPOLearner
@@ -29,7 +29,7 @@ class PPOBuilder(Builder):
 
     def make_replay(self):
         return ReplayBuffer(
-            TensorCircularBuffer(self.cfg.agent.replay_buffer_size),
+            CircularBuffer(self.cfg.agent.replay_buffer_size, collate_fn=torch.cat),
             UniformSampler()
         )
 

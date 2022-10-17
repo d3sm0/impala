@@ -6,7 +6,7 @@ from _rlmeta_extension import PrioritizedSampler
 from rlmeta.agents.agent import AgentFactory
 from rlmeta.core.model import ModelLike
 from rlmeta.core.replay_buffer import ReplayBufferLike, ReplayBuffer
-from rlmeta.storage import  CircularBuffer
+from rlmeta.storage import CircularBuffer
 
 from agents.core import Builder
 from agents.dqn.learning import ApexActor, ApexLearner
@@ -78,11 +78,14 @@ class ApexDQNBuilder(Builder):
             eps_func = ConstantEpsFunc(self.cfg.agent.eval_eps)
         else:
             eps_func = FlexibleEpsFunc(self.cfg.agent.train_eps, self.cfg.training.num_rollouts)
-        return ApexDQNAgentFactory(model, eps_func, rb, n_step=self.cfg.agent.n_step, rollout_length=self.cfg.agent.rollout_length)
+        return ApexDQNAgentFactory(model, eps_func, rb, n_step=self.cfg.agent.n_step,
+                                   rollout_length=self.cfg.agent.rollout_length)
 
     def make_learner(self, model: ModelLike, rb: ReplayBufferLike):
         optimizer = torch.optim.Adam(self._learner_model.parameters(), lr=self.cfg.optimizer.lr,
                                      eps=self.cfg.optimizer.eps)
+
+        # optimizer = torch.optim.RMSprop(self._learner_model.parameters(), lr=0.00025 / 4, alpha=0.95, eps=1.5e-7)
         learner = ApexLearner(
             model,
             replay_buffer=rb,

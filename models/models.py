@@ -36,7 +36,7 @@ class LinearBody(nn.Module):
 class ImpalaActorCritic(nn.Module):
     def __init__(self, obs_dim: Tuple[int, ...], action_dim: int, h_dim=256):
         super().__init__()
-        self.body = ImpalaCNN(obs_dim, d_model=h_dim)
+        self.body = ImpalaCNNLarge(obs_dim.shape, d_model=h_dim)
         self.policy = layer_init_normed(nn.Linear(h_dim, action_dim))
         self.value = nn.Sequential(layer_init_normed(nn.Linear(h_dim, 1)), nn.Flatten(start_dim=-2))
 
@@ -48,10 +48,10 @@ class ImpalaActorCritic(nn.Module):
 
 
 class AtariDQN(nn.Module):
-    def __init__(self, obs_dim: Tuple[int, ...], action_dim: int, h_dim=512):
+    def __init__(self, obs_dim: Tuple[int, ...], action_dim: int, h_dim=256):
         super().__init__()
-        self.body = AtariBody(obs_dim)
-        # self.body = ImpalaCNN(obs_dim, d_model=h_dim)
+        # self.body = AtariBody(obs_dim, h_dim)
+        self.body = ImpalaCNNLarge(obs_dim, d_model=h_dim)
         self.q = layer_init_normed(nn.Linear(h_dim, action_dim))
         self.v = layer_init_normed(nn.Linear(h_dim, 1))
 
@@ -82,7 +82,7 @@ class DQN(nn.Module):
 
 
 class AtariBody(nn.Module):
-    def __init__(self, obs_dim: Tuple[int, ...], h_dim=256):
+    def __init__(self, obs_dim: Tuple[int, ...], h_dim=512):
         super().__init__()
         self.body = nn.Sequential(
             layer_init(nn.Conv2d(4, 32, 8, stride=4)),
@@ -92,7 +92,7 @@ class AtariBody(nn.Module):
             layer_init(nn.Conv2d(64, 64, 3, stride=1)),
             nn.ReLU(),
             nn.Flatten(),
-            layer_init(nn.Linear(64 * 7 * 7, 512)),
+            layer_init(nn.Linear(64 * 7 * 7, h_dim)),
             nn.ReLU(),
         )
 
@@ -101,11 +101,11 @@ class AtariBody(nn.Module):
 
 
 class AtariActorCritic(nn.Module):
-    def __init__(self, observation_space=None, action_space: int = 6):
+    def __init__(self, observation_space=None, action_space: int = 6, h_dim: int = 256):
         super(AtariActorCritic, self).__init__()
-        self.body = AtariBody(observation_space)
-        self.actor = layer_init(nn.Linear(512, action_space), std=0.01)
-        self.critic = layer_init(nn.Linear(512, 1), std=1)
+        self.body = ImpalaCNNSmall(observation_space.shape, d_model=256)
+        self.actor = layer_init(nn.Linear(h_dim, action_space), std=0.01)
+        self.critic = layer_init(nn.Linear(h_dim, 1), std=1)
 
     def forward(self, x):
         x = x / 255.
@@ -151,7 +151,7 @@ class VFunction(nn.Module):
     def __init__(self, observation_space, d_model=100):
         super().__init__()
 
-        self.body = ImpalaCNN(observation_space, d_model=d_model)
+        self.body = ImpalaCNNLarge(observation_space, d_model=d_model)
         self.critic = layer_init_normed(nn.Linear(in_features=d_model, out_features=1))
 
     def forward(self, s):
@@ -231,9 +231,28 @@ class ConvSequence(nn.Module):
         return self._out_channels, (h + 1) // 2, (w + 1) // 2
 
 
-class ImpalaCNN(nn.Module):
+class ImpalaCNNSmall(nn.Module):
+    def __init__(self, input_shape: Tuple[int, ...], d_model: int = 256):
+        super(ImpalaCNNSmall, self).__init__()
+        c, h, w = input_shape
+        nn.Sequential(
+            layer_init_normed(nn.Conv2d(in_channels=c, out_channels=16, kernel_size=8, stride=4), norm_dim=(1, 2, 3),
+                              scale=1),
+            nn.ReLU(),
+            layer_init_normed(nn.Conv2d(in_channels=16, out_channels=32, kernel_size=4, stride=2), norm_dim=(1, 2, 3),
+                              scale=1),
+            nn.Flatten(),
+            layer_init_normed(nn.Linear(in_features=32 * 9 * 9, out_features=d_model), scale=1.4),
+            nn.ReLU(),
+        )
+
+    def forward(self, x):
+        return self.body(x)
+
+
+class ImpalaCNNLarge(nn.Module):
     def __init__(self, input_shape, d_model: int = 256):
-        super(ImpalaCNN, self).__init__()
+        super(ImpalaCNNLarge, self).__init__()
         c, h, w = input_shape
         shape = (c, h, w)
         conv_seqs = []

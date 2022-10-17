@@ -59,7 +59,6 @@ class ApexActor(Actor):
         discount_t = (not_done.roll(1, dims=0) * torch.ones_like(not_done)) * self._gamma
         # replace the last element with q_star
         target = rlego.n_step_bootstrapped_returns(r_t, discount_t, q_star_t[1:].squeeze(dim=-1), n=self._n_step)
-        # priorities = (target - q_pi_t[:-1].squeeze(dim=-1)).abs()
         priorities = (target - q_pi_t[:-1].squeeze(dim=-1)).abs()
         return nested_utils.unbatch_nested(lambda x: x.unsqueeze(1), (s_tm1, a_t, target), target.shape[0]), priorities
 

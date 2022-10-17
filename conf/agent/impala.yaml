@@ -1,8 +1,8 @@
 replay_buffer_size: 256
 learning_starts: 100
 rollout_length: 20
-batch_size: 8
+batch_size: 32
 model_push_period: 4
-prefetch: 2
-entropy_cost: 0.0
+prefetch: 5
+entropy_cost: 0.01
 max_grad_norm: 0.5

@@ -2,11 +2,11 @@ import copy
 from typing import Optional
 
 import torch
-from _rlmeta_extension import UniformSampler
 from rlmeta.agents.agent import AgentFactory
 from rlmeta.core.model import ModelLike
 from rlmeta.core.replay_buffer import ReplayBuffer, ReplayBufferLike
-from rlmeta.storage import TensorCircularBuffer
+from rlmeta.samplers import UniformSampler
+from rlmeta.storage import CircularBuffer
 
 from agents.core import Actor, Builder
 from agents.impala.learning import ImpalaActor, ImpalaLearner
@@ -29,7 +29,7 @@ class ImpalaBuilder(Builder):
 
     def make_replay(self):
         return ReplayBuffer(
-            TensorCircularBuffer(self.cfg.agent.replay_buffer_size),
+            CircularBuffer(self.cfg.agent.replay_buffer_size, collate_fn=torch.stack),
             UniformSampler()
         )
 
@@ -37,8 +37,11 @@ class ImpalaBuilder(Builder):
         return ImpalaActorFactory(model, rb, deterministic)
 
     def make_learner(self, model: ModelLike, rb: ReplayBufferLike):
-        optimizer = torch.optim.Adam(self._learner_model.parameters(), lr=self.cfg.optimizer.lr,
-                                     eps=self.cfg.optimizer.eps)
+        # optimizer = torch.optim.Adam(self._learner_model.parameters(), lr=self.cfg.optimizer.lr,
+        #                              eps=self.cfg.optimizer.eps)
+        optimizer = torch.optim.RMSprop(
+            self._learner_model.parameters(), alpha=0.95, eps=1.5e-7, lr=0.00025 / 4
+        )
         return ImpalaLearner(model, rb, optimizer)
 
     def make_network(self, env_spec):
