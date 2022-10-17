@@ -29,8 +29,10 @@ from agents.dqn.builder import ApexDQNBuilder
 def main(cfg):
     logging.info(hydra_utils.config_to_json(cfg))
     # Meh
-    if "SLURM_JOB_ID" in os.environ.keys():
+    if "SLURM_JOB_ID" in os.environ.keys() or cfg.distributed.host == "mila":
         cfg = omegaconf.OmegaConf.merge(cfg, omegaconf.OmegaConf.load("conf/deploy/mila.yaml"))
+    else:
+        cfg = omegaconf.OmegaConf.merge(cfg, omegaconf.OmegaConf.load("conf/deploy/local.yaml"))
 
     writer = experiment_buddy.deploy(host=cfg.distributed.host,
                                      disabled=sys.gettrace() is not None,
