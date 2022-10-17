@@ -3,6 +3,7 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 import logging
+import os
 import sys
 
 import experiment_buddy
@@ -18,7 +19,6 @@ import utils
 import wandb
 from agents.distributed_agent import DistributedAgent
 from agents.dqn.builder import ApexDQNBuilder
-from agents.impala.builder import ImpalaBuilder
 
 
 # from agents.ppo.builder import PPOBuilder
@@ -28,6 +28,9 @@ from agents.impala.builder import ImpalaBuilder
 @hydra.main(version_base=None, config_path="./conf", config_name="config")
 def main(cfg):
     logging.info(hydra_utils.config_to_json(cfg))
+    # Meh
+    if "SLURM_JOB_ID" in os.environ.keys():
+        cfg = omegaconf.OmegaConf.merge(cfg, omegaconf.OmegaConf.load("conf/deploy/mila.yaml"))
 
     writer = experiment_buddy.deploy(host=cfg.distributed.host,
                                      disabled=sys.gettrace() is not None,
@@ -55,7 +58,8 @@ def main(cfg):
     e_ctrl, e_model, _ = utils.create_workers(cfg, ctrl, builder.actor_model)
 
     e_agent_fac = builder.make_actor(e_model, deterministic=True)
-    evaluate_loop = utils.create_evaluation_loops(cfg, envs.EnvFactory(cfg.task.env_id, train=False), e_agent_fac, e_ctrl)
+    evaluate_loop = utils.create_evaluation_loops(cfg, envs.EnvFactory(cfg.task.env_id, train=False), e_agent_fac,
+                                                  e_ctrl)
 
     loops = LoopList([train_loop, evaluate_loop])
 

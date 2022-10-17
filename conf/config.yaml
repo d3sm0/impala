@@ -1,4 +1,5 @@
 defaults:
+  - _self_
   - agent: apex
   - override hydra/hydra_logging: disabled
   - override hydra/job_logging: disabled
@@ -20,7 +21,7 @@ distributed:
   c_server_addr: ${distributed.server_addr}:4413
 
   train_device: "cuda:0"
-  infer_device: "cuda:1"
+  infer_device: "cuda:0"
   host: ""
 
 task:
@@ -36,8 +37,8 @@ evaluation:
   num_episodes: 1
 
 training:
-  num_workers: 28
-  num_rollouts: 56
+  num_workers: 4
+  num_rollouts: 8
   seed: 123
   num_epochs: 1000
   steps_per_epoch: 5000

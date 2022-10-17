@@ -4,6 +4,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+from models.quantile_layers import ImplicitQuantileHead
+
 
 def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
     torch.nn.init.orthogonal_(layer.weight, std)
@@ -47,11 +49,28 @@ class ImpalaActorCritic(nn.Module):
         return pi, v
 
 
+class DistributionalDQN(nn.Module):
+    def __init__(self, obs_dim: Tuple[int, ...], action_dim: int, h_dim=512, tau_samples=32):
+        super().__init__()
+        self.body = AtariBody(obs_dim, h_dim, project=False)
+        # self.body = ImpalaCNNLarge(obs_dim, d_model=h_dim)
+        self.q = ImplicitQuantileHead(7 * 7 * 64, h_dim, action_dim)
+        self.tau_samples = tau_samples
+        self.v = layer_init_normed(nn.Linear(h_dim, 1))
+
+    def forward(self, s):
+        h = self.body(s / 255.)
+        taus = torch.rand(size=(self.tau_samples, h.shape[0]), device=h.device)
+        q = self.q(h, taus)
+        return q, taus
+
+
 class AtariDQN(nn.Module):
     def __init__(self, obs_dim: Tuple[int, ...], action_dim: int, h_dim=256):
         super().__init__()
-        # self.body = AtariBody(obs_dim, h_dim)
-        self.body = ImpalaCNNLarge(obs_dim, d_model=h_dim)
+        self.body = AtariBody(obs_dim, h_dim)
+        # self.body = ImpalaCNNLarge(obs_dim, d_model=h_dim)
+        # self.body = ImpalaCNNSmall(obs_dim, d_model=h_dim)
         self.q = layer_init_normed(nn.Linear(h_dim, action_dim))
         self.v = layer_init_normed(nn.Linear(h_dim, 1))
 
@@ -92,7 +111,25 @@ class AtariBody(nn.Module):
             layer_init(nn.Conv2d(64, 64, 3, stride=1)),
             nn.ReLU(),
             nn.Flatten(),
-            layer_init(nn.Linear(64 * 7 * 7, h_dim)),
+            nn.Sequential(layer_init(nn.Linear(64 * 7 * 7, h_dim)),
+                          nn.ReLU()))
+
+    def forward(self, x):
+        return self.body(x)
+
+
+class ImpalaCNNSmall(nn.Module):
+    def __init__(self, input_shape: Tuple[int, ...], d_model: int = 256):
+        super(ImpalaCNNSmall, self).__init__()
+        c, h, w = input_shape
+        self.body = nn.Sequential(
+            layer_init_normed(nn.Conv2d(in_channels=c, out_channels=16, kernel_size=8, stride=4), norm_dim=(1, 2, 3),
+                              scale=1),
+            nn.ReLU(),
+            layer_init_normed(nn.Conv2d(in_channels=16, out_channels=32, kernel_size=4, stride=2), norm_dim=(1, 2, 3),
+                              scale=1),
+            nn.Flatten(),
+            layer_init_normed(nn.Linear(in_features=32 * 9 * 9, out_features=d_model), scale=1.4),
             nn.ReLU(),
         )
 
@@ -229,25 +266,6 @@ class ConvSequence(nn.Module):
     def get_output_shape(self):
         _c, h, w = self._input_shape
         return self._out_channels, (h + 1) // 2, (w + 1) // 2
-
-
-class ImpalaCNNSmall(nn.Module):
-    def __init__(self, input_shape: Tuple[int, ...], d_model: int = 256):
-        super(ImpalaCNNSmall, self).__init__()
-        c, h, w = input_shape
-        nn.Sequential(
-            layer_init_normed(nn.Conv2d(in_channels=c, out_channels=16, kernel_size=8, stride=4), norm_dim=(1, 2, 3),
-                              scale=1),
-            nn.ReLU(),
-            layer_init_normed(nn.Conv2d(in_channels=16, out_channels=32, kernel_size=4, stride=2), norm_dim=(1, 2, 3),
-                              scale=1),
-            nn.Flatten(),
-            layer_init_normed(nn.Linear(in_features=32 * 9 * 9, out_features=d_model), scale=1.4),
-            nn.ReLU(),
-        )
-
-    def forward(self, x):
-        return self.body(x)
 
 
 class ImpalaCNNLarge(nn.Module):
