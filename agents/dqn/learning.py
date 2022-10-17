@@ -149,10 +149,6 @@ class ApexLearner(Learner):
         grad_norm = torch.nn.utils.clip_grad_norm_(self._model.parameters(),
                                                    self._max_grad_norm)
         self._optimizer.step()
-
-        with torch.no_grad():
-            q = self._model(obs)
-            q = q.gather(1, action.unsqueeze(-1)).squeeze(-1)
         priorities = (target - q).squeeze(-1).abs().cpu()
 
         # Wait for previous update request
