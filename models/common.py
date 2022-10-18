@@ -113,11 +113,11 @@ class AtariBody(nn.Module):
     def __init__(self, obs_dim: Tuple[int, ...]):
         super().__init__()
         self.body = nn.Sequential(
-            layer_init_ortho(nn.Conv2d(4, 32, 8, stride=4)),
+            layer_init_truncated(nn.Conv2d(4, 32, 8, stride=4)),
             nn.ReLU(),
-            layer_init_ortho(nn.Conv2d(32, 64, 4, stride=2)),
+            layer_init_truncated(nn.Conv2d(32, 64, 4, stride=2)),
             nn.ReLU(),
-            layer_init_ortho(nn.Conv2d(64, 64, 3, stride=1)),
+            layer_init_truncated(nn.Conv2d(64, 64, 3, stride=1)),
             nn.ReLU(),
             nn.Flatten())
 
