@@ -18,8 +18,9 @@ class EnvPool(GymWrapper):
         # The new gym api carries terminal. We don't care for now, as evnpool, skip one step which we mask later
         # in the env
         s, r, d, info = self.env.step(action.action.cpu().numpy())
-        return TimeStep(observation=self._observation_fn(s), reward=torch.tensor(r),
-                        done=torch.tensor(d, dtype=torch.bool), info=info)
+        r = torch.tensor(r)
+        d = torch.tensor(d, dtype=torch.bool)
+        return TimeStep(observation=self._observation_fn(s), reward=r, done=d, info=info)
 
     def reset(self, *args, **kwargs) -> TimeStep:
         s = self.env.reset(*args, **kwargs)

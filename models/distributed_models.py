@@ -71,7 +71,7 @@ class AtariDQNModel(RemotableModel):
 
     def __init__(self, observation_space: Tuple[int, ...], action_dim: int) -> None:
         super().__init__()
-        self.online_net = models.AtariDQN(observation_space, action_dim)
+        self.online_net = models.DuellingAtariNetwork(observation_space, action_dim)
         self.target_net = copy.deepcopy(self.online_net)
         for p in self.target_net.parameters():
             p.requires_grad = False

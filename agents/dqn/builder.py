@@ -10,8 +10,7 @@ from rlmeta.storage import CircularBuffer
 
 import models
 from agents.core import Builder
-from agents.dqn.learning import ApexActor, ApexLearner, DistributionalApex
-from models import AtariDQNModel, DistributionalAtariNetwork
+from agents.dqn.learning import ApexActor, DistributionalApex
 
 
 class ApexDQNAgentFactory(AgentFactory):
@@ -69,9 +68,12 @@ class ApexDQNBuilder(Builder):
         self._actor_model = None
 
     def make_replay(self):
+        sampler = PrioritizedSampler(priority_exponent=self.cfg.agent.priority_exponent)
+        sampler.reset(self.cfg.training.seed)
         rb = ReplayBuffer(
             CircularBuffer(self.cfg.agent.replay_buffer_size, collate_fn=torch.cat),
-            PrioritizedSampler(priority_exponent=self.cfg.agent.priority_exponent))
+            sampler
+        )
         return rb
 
     def make_actor(self, model: ModelLike, rb: Optional[ReplayBufferLike] = None, deterministic: bool = False):

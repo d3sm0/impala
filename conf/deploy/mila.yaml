@@ -1,0 +1,8 @@
+# @package _global_
+
+distributed:
+  infer_device: "cuda:1"
+  host: "mila"
+training:
+  num_workers: 28
+  num_rollouts: 56
