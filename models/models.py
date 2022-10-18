@@ -86,7 +86,7 @@ class DuellingAtariNetwork(nn.Module):
 
 
 class DistributionalAtariNetwork(nn.Module):
-    def __init__(self, obs_dim: Tuple[int, ...], action_dim: int, h_dim: int = 512, tau_samples: int = 6):
+    def __init__(self, obs_dim: Tuple[int, ...], action_dim: int, h_dim: int = 512, tau_samples: int = 32):
         super().__init__()
         self.body = models.common.AtariBody(obs_dim)
         self.q = models.quantile_layers.ImplicitQuantileHead(self.body.output_dim, action_dim, d_model=h_dim)

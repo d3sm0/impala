@@ -146,7 +146,7 @@ class LinearBody(nn.Module):
 def layer_init_truncated(layer, bias_const=0.0):
     with torch.no_grad():
         if isinstance(layer, nn.Conv2d):
-            fan_in, _ = torch.nn.init._calculate_fan_in_and_fan_out(layer)
+            fan_in, _ = torch.nn.init._calculate_fan_in_and_fan_out(layer.weight)
         else:
             # the weight matrix is [out, in]
             fan_in = layer.weight.shape[1]
