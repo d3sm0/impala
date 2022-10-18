@@ -10,6 +10,8 @@ import experiment_buddy
 import hydra
 import omegaconf
 import rlmeta.utils.hydra_utils as hydra_utils
+import torch
+import torch.backends.cudnn
 import torch.multiprocessing as mp
 from rlmeta.core.controller import Controller
 from rlmeta.core.loop import LoopList
@@ -28,6 +30,12 @@ from agents.dqn.builder import ApexDQNBuilder
 @hydra.main(version_base=None, config_path="./conf", config_name="config")
 def main(cfg):
     logging.info(hydra_utils.config_to_json(cfg))
+
+    torch.manual_seed(cfg.training.seed)
+    torch.cuda.manual_seed_all(cfg.training.seed)
+    torch.backends.cudnn.benchmark = True
+    torch.backends.cudnn.deterministic = True
+
     # Meh
     if "SLURM_JOB_ID" in os.environ.keys() or cfg.distributed.host == "mila":
         cfg = omegaconf.OmegaConf.merge(cfg, omegaconf.OmegaConf.load("conf/deploy/mila.yaml"))
