@@ -10,3 +10,4 @@ n_step: 3
 learning_starts: 50000
 model_push_period: 10
 rollout_length: 100
+n_tau_samples: 8  # this is a feature for distributional, no need to create a new config

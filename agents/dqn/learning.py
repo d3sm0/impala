@@ -53,18 +53,22 @@ class ApexActor(Actor):
         replay, priorities = self._make_replay()
         await self._replay_buffer.async_extend(replay, priorities)
 
-    # def _make_replay(self) -> Tuple[List[NestedTensor], torch.Tensor]:
-    #     # TODO : this very likely is buggy make a test for it
-    #     s_tm1, a_t, r_t, d_t, q_pi_t, q_star_t = self._trajectory.get()
-    #     s_tm1, a_t, r_t, d_t = nested_utils.map_nested(lambda x: x.squeeze(-1)[:-1], (s_tm1, a_t, r_t, d_t))
-    #     not_done = torch.logical_not(d_t)
-    #     discount_t = (not_done.roll(1, dims=0) * torch.ones_like(not_done)) * self._gamma
-    #     # replace the last element with q_star
-    #     target = rlego.n_step_bootstrapped_returns(r_t, discount_t, q_star_t[1:].squeeze(dim=-1), n=self._n_step)
-    #     priorities = (target - q_pi_t[:-1].squeeze(dim=-1)).abs()
-    #     return nested_utils.unbatch_nested(lambda x: x.unsqueeze(1), (s_tm1, a_t, target), target.shape[0]), priorities
     def _make_replay(self) -> Tuple[List[NestedTensor], torch.Tensor]:
         # TODO : this very likely is buggy make a test for it
+        s_tm1, a_t, r_t, d_t, q_pi_t, q_star_t = self._trajectory.get()
+        s_tm1, a_t, r_t, d_t = nested_utils.map_nested(lambda x: x.squeeze(-1)[:-1], (s_tm1, a_t, r_t, d_t))
+        not_done = torch.logical_not(d_t)
+        discount_t = (not_done.roll(1, dims=0) * torch.ones_like(not_done)) * self._gamma
+        # replace the last element with q_star
+        target = rlego.n_step_bootstrapped_returns(r_t, discount_t, q_star_t[1:].squeeze(dim=-1), n=self._n_step)
+        priorities = (target - q_pi_t[:-1].squeeze(dim=-1)).abs()
+        return nested_utils.unbatch_nested(lambda x: x.unsqueeze(1), (s_tm1, a_t, target), target.shape[0]), priorities
+
+
+class ApexDistributionalActor(ApexActor):
+    def _make_replay(self) -> Tuple[List[NestedTensor], torch.Tensor]:
+        # TODO: we should use vmap here but is not supported by the cluster
+        # if so ApexActor and ApexDistributional should be merged
         s_tm1, a_t, r_t, d_t, q_pi_t, q_star_t = self._trajectory.get()
         s_tm1, a_t, r_t, d_t = nested_utils.map_nested(lambda x: x.squeeze(-1)[:-1], (s_tm1, a_t, r_t, d_t))
         not_done = torch.logical_not(d_t)
@@ -166,7 +170,8 @@ class ApexLearner(Learner):
         grad_norm = torch.nn.utils.clip_grad_norm_(self._model.parameters(),
                                                    self._max_grad_norm)
         self._optimizer.step()
-        priorities = (target - q).squeeze(-1).abs().cpu()
+        with torch.no_grad():
+            priorities = (target - q).squeeze(-1).abs().cpu()
 
         # Wait for previous update request
         priority_update_time = 0

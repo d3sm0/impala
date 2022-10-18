@@ -8,7 +8,7 @@ import models.quantile_layers
 
 
 class DistributionalDQN(nn.Module):
-    def __init__(self, obs_dim, action_dim, h_dim=120, tau_samples=32):
+    def __init__(self, obs_dim: Tuple[int, ...], action_dim: int, h_dim: int = 120, tau_samples: int = 8):
         super().__init__()
         obs_dim, = obs_dim
         self.body = nn.Sequential(
@@ -48,18 +48,18 @@ class DuellingHead(nn.Module):
             nn.LayerNorm(input_dim),
             models.common.layer_init_truncated(nn.Linear(input_dim, h_dim)),
             nn.GELU())
-        self.q = models.common.layer_init_truncated(nn.Linear(input_dim, output_dim))
-        self.v = models.common.layer_init_truncated(nn.Linear(input_dim, 1))
+        self.q = models.common.layer_init_truncated(nn.Linear(h_dim, output_dim))
+        self.v = models.common.layer_init_truncated(nn.Linear(h_dim, 1))
 
     def forward(self, x):
         h = self.body(x)
         q = self.q(h)
         v = self.v(h)
-        return v + q - q.mean(dim=-1, keepdim=True), v
+        return v + q - q.mean(dim=-1, keepdim=True)
 
 
 class AtariActorCritic(nn.Module):
-    def __init__(self, observation_space=None, action_space: int = 6, h_dim: int = 256):
+    def __init__(self, observation_space: Tuple[int, ...], action_space: int = 6, h_dim: int = 256):
         super(AtariActorCritic, self).__init__()
         self.body = models.common.AtariBody(observation_space)
         self.projection = nn.Sequential(
@@ -78,7 +78,7 @@ class DuellingAtariNetwork(nn.Module):
     def __init__(self, obs_dim: Tuple[int, ...], action_dim: int, h_dim: int = 512):
         super().__init__()
         self.body = models.common.AtariBody(obs_dim)
-        self.q = DuellingHead(h_dim, action_dim)
+        self.q = DuellingHead(self.body.output_dim, action_dim, h_dim=h_dim)
 
     def forward(self, s):
         h = self.body(s / 255.)
@@ -86,14 +86,14 @@ class DuellingAtariNetwork(nn.Module):
 
 
 class DistributionalAtariNetwork(nn.Module):
-    def __init__(self, obs_dim: Tuple[int, ...], action_dim: int, h_dim: int = 512, tau_samples: int = 32):
+    def __init__(self, obs_dim: Tuple[int, ...], action_dim: int, h_dim: int = 512, n_tau_samples: int = 32):
         super().__init__()
         self.body = models.common.AtariBody(obs_dim)
         self.q = models.quantile_layers.ImplicitQuantileHead(self.body.output_dim, action_dim, d_model=h_dim)
-        self.tau_samples = tau_samples
+        self.n_tau_samples = n_tau_samples
 
     def forward(self, s):
         h = self.body(s / 255.)
-        taus = torch.rand(size=(h.shape[0], self.tau_samples), device=h.device)
+        taus = torch.rand(size=(h.shape[0], self.n_tau_samples), device=h.device)
         q = self.q(h, taus)
         return q, taus

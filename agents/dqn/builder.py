@@ -10,7 +10,7 @@ from rlmeta.storage import CircularBuffer
 
 import models
 from agents.core import Builder
-from agents.dqn.learning import ApexActor, DistributionalApex
+from agents.dqn.learning import ApexActor, DistributionalApex, ApexDistributionalActor, ApexLearner
 
 
 class ApexDQNAgentFactory(AgentFactory):
@@ -32,6 +32,19 @@ class ApexDQNAgentFactory(AgentFactory):
         eps = self._eps_func(index)
         replay_buffer = self._make_arg(self._replay_buffer, index)
         return ApexActor(
+            model,
+            replay_buffer,
+            eps,
+            **self._kwargs
+        )
+
+
+class DistributionalApexDQNAgentFactory(ApexDQNAgentFactory):
+    def __call__(self, index) -> ApexDistributionalActor:
+        model = self._make_arg(self._model, index)
+        eps = self._eps_func(index)
+        replay_buffer = self._make_arg(self._replay_buffer, index)
+        return ApexDistributionalActor(
             model,
             replay_buffer,
             eps,
@@ -89,7 +102,7 @@ class ApexDQNBuilder(Builder):
                                      eps=self.cfg.optimizer.eps)
 
         # optimizer = torch.optim.RMSprop(self._learner_model.parameters(), lr=0.00025 / 4, alpha=0.95, eps=1.5e-7)
-        learner = DistributionalApex(
+        learner = ApexLearner(
             model,
             replay_buffer=rb,
             optimizer=optimizer,
@@ -98,7 +111,42 @@ class ApexDQNBuilder(Builder):
         return learner
 
     def make_network(self, env_spec):
-        model = models.DistributionalAtariDQN(env_spec.observation_space.shape, env_spec.action_space.n).to(
+        model = models.AtariDQNModel(env_spec.observation_space.shape, env_spec.action_space.n).to(
+            self.cfg.distributed.train_device)
+        self._learner_model = model
+        actor_model = copy.deepcopy(model).to(self.cfg.distributed.infer_device)
+        for param in actor_model.parameters():
+            param.requires_grad = False
+        self._actor_model = actor_model
+        return model
+
+
+class DistributionalApexBuilder(ApexDQNBuilder):
+
+    def make_learner(self, model: ModelLike, rb: ReplayBufferLike):
+        optimizer = torch.optim.Adam(self._learner_model.parameters(), lr=self.cfg.optimizer.lr,
+                                     eps=self.cfg.optimizer.eps)
+
+        # optimizer = torch.optim.RMSprop(self._learner_model.parameters(), lr=0.00025 / 4, alpha=0.95, eps=1.5e-7)
+        learner = DistributionalApex(
+            model,
+            replay_buffer=rb,
+            optimizer=optimizer,
+            learning_starts=self.cfg.agent.learning_starts,
+        )
+        return learner
+
+    def make_actor(self, model: ModelLike, rb: Optional[ReplayBufferLike] = None, deterministic: bool = False):
+        if deterministic:
+            eps_func = ConstantEpsFunc(self.cfg.agent.eval_eps)
+        else:
+            eps_func = FlexibleEpsFunc(self.cfg.agent.train_eps, self.cfg.training.num_rollouts)
+        return DistributionalApexDQNAgentFactory(model, eps_func, rb, n_step=self.cfg.agent.n_step,
+                                                 rollout_length=self.cfg.agent.rollout_length)
+
+    def make_network(self, env_spec):
+        model = models.DistributionalAtariDQN(env_spec.observation_space.shape, env_spec.action_space.n,
+                                              n_tau_samples=self.cfg.agent.n_tau_samples).to(
             self.cfg.distributed.train_device)
         self._learner_model = model
         actor_model = copy.deepcopy(model).to(self.cfg.distributed.infer_device)

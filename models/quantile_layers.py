@@ -27,8 +27,7 @@ class ImplicitQuantileHead(nn.Module):
     def forward(self, input_data: torch.Tensor, tau: torch.Tensor = torch.tensor((0.5,))):
         tau = tau.to(input_data.device)
         embedded_tau = self.quantile_layer(tau)
-        # This can also be written as a multiplication
-        h = input_data.unsqueeze(1) * (1 + embedded_tau)
+        h = input_data.unsqueeze(1) * embedded_tau
         h = self.project(h)
         q = self.q(h)
         # v = self.v(h)
