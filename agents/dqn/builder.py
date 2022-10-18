@@ -8,9 +8,10 @@ from rlmeta.core.model import ModelLike
 from rlmeta.core.replay_buffer import ReplayBufferLike, ReplayBuffer
 from rlmeta.storage import CircularBuffer
 
+import models
 from agents.core import Builder
 from agents.dqn.learning import ApexActor, ApexLearner, DistributionalApex
-from models import AtariDQNModel, DistributionalAtariDQN
+from models import AtariDQNModel, DistributionalAtariNetwork
 
 
 class ApexDQNAgentFactory(AgentFactory):
@@ -95,7 +96,7 @@ class ApexDQNBuilder(Builder):
         return learner
 
     def make_network(self, env_spec):
-        model = DistributionalAtariDQN(env_spec.observation_space.shape, env_spec.action_space.n).to(
+        model = models.DistributionalAtariDQN(env_spec.observation_space.shape, env_spec.action_space.n).to(
             self.cfg.distributed.train_device)
         self._learner_model = model
         actor_model = copy.deepcopy(model).to(self.cfg.distributed.infer_device)

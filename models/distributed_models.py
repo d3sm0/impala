@@ -35,7 +35,7 @@ class AtariPPOModel(RemotableModel):
 class DistributionalAtariDQN(RemotableModel):
     def __init__(self, observation_space: Tuple[int, ...], action_dim: int) -> None:
         super().__init__()
-        self.online_net = models.DistributionalDQN(observation_space, action_dim)
+        self.online_net = models.models.DistributionalAtariNetwork(observation_space, action_dim)
         self.target_net = copy.deepcopy(self.online_net)
         for p in self.target_net.parameters():
             p.requires_grad = False
@@ -47,7 +47,6 @@ class DistributionalAtariDQN(RemotableModel):
     def act(self, obs: torch.Tensor,
             eps: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         device = next(self.parameters()).device
-        # TODO: distributional here
         with torch.no_grad():
             x = obs.to(device)
             eps = eps.to(device)  # size = (batch_size, 1)
@@ -60,7 +59,7 @@ class DistributionalAtariDQN(RemotableModel):
             action = pi.multinomial(1, replacement=True)
             q_pi = q.gather(dim=-1, index=action)
             q_target, taus = self.target_net(x)
-            q_star = q_target.gather(dim=-1, index=greedy_action.expand(taus.shape).unsqueeze(-1))
+            q_star = q_target.gather(dim=-1, index=greedy_action.unsqueeze(1).repeat(1,q_target.shape[1], 1)).squeeze(-1)
 
         return action.cpu(), q_pi.cpu(), q_star.cpu()
 

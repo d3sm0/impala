@@ -49,8 +49,8 @@ class ImpalaActorCritic(nn.Module):
         return pi, v
 
 
-class DistributionalDQN(nn.Module):
-    def __init__(self, obs_dim: Tuple[int, ...], action_dim: int, h_dim=512, tau_samples=32):
+class DistributionalAtariNetwork(nn.Module):
+    def __init__(self, obs_dim: Tuple[int, ...], action_dim: int, h_dim=512, tau_samples=6):
         super().__init__()
 
         self.body = nn.Sequential(
@@ -67,9 +67,9 @@ class DistributionalDQN(nn.Module):
 
     def forward(self, s):
         h = self.body(s / 255.)
-        taus = torch.rand(size=(self.tau_samples, h.shape[0]), device=h.device)
+        taus = torch.rand(size=(h.shape[0], self.tau_samples), device=h.device)
         q = self.q(h, taus)
-        return q.transpose(0, 1), taus.transpose(0, 1)
+        return q, taus
 
 
 class AtariDQN(nn.Module):
@@ -93,18 +93,23 @@ class DQN(nn.Module):
         super().__init__()
         # obs_dim, = obs_dim
         self.body = nn.Sequential(
-            layer_init(nn.Linear(4, 120)),
-            nn.ReLU(),
-            layer_init(nn.Linear(120, 84)),
+            nn.Linear(4, 120),
             nn.ReLU())
-        self.q = layer_init_normed(nn.Linear(84, 2))
-        self.v = layer_init_normed(nn.Linear(84, 1))
+        # nn.Linear(120, 84),
+        # nn.ReLU())
+
+        self.q = ImplicitQuantileHead(120, 2, d_model=84)
+        self.tau_samples = 32
+        # self.q = nn.Linear(84, 2)k
+        self.v = layer_init_normed(nn.Linear(120, 1))
 
     def forward(self, x):
         h = self.body(x)
-        q = self.q(h)
-        v = self.v(h)
-        return v + q - q.mean(dim=-1, keepdim=True)
+        taus = torch.rand(size=(h.shape[0], self.tau_samples), device=h.device)
+        # v = self.v(h)
+        q = self.q(h, taus)
+        # q = v.unsqueeze(1) + q - q.mean(dim=-1, keepdim=True)
+        return q, taus
 
 
 class AtariBody(nn.Module):

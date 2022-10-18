@@ -1,7 +1,9 @@
 import time
 from typing import Optional, Tuple, List, Dict
 
+# import functorch
 import moolib
+import rlego
 import torch
 from rlmeta.core.model import ModelLike
 from rlmeta.core.replay_buffer import ReplayBufferLike
@@ -9,7 +11,7 @@ from rlmeta.core.types import TimeStep, Action, NestedTensor
 from rlmeta.utils import nested_utils
 
 from agents.core import Actor, Learner
-from models.quantile_layers import quantile_loss
+from models.quantile_layers import quantile_regression_loss
 
 
 class ApexActor(Actor):
@@ -68,8 +70,12 @@ class ApexActor(Actor):
         not_done = torch.logical_not(d_t)
         discount_t = (not_done.roll(1, dims=0) * torch.ones_like(not_done)) * self._gamma
         # replace the last element with q_star
-        # target = rlego.n_step_bootstrapped_returns(r_t, discount_t, q_star_t[1:].squeeze(dim=-1), n=self._n_step)
-        target = r_t[:, None] + discount_t[:, None] * q_star_t[1:].squeeze(dim=-1)
+        n, k = q_star_t.shape
+        targets = []
+        for idx in range(k):
+            target = rlego.n_step_bootstrapped_returns(r_t, discount_t, q_star_t[1:, idx], n=self._n_step)
+            targets.append(target)
+        target = torch.stack(targets, dim=1)
         priorities = (target.mean(1) - q_pi_t[:-1].squeeze(dim=-1)).abs()
         return nested_utils.unbatch_nested(lambda x: x.unsqueeze(1), (s_tm1, a_t, target), target.shape[0]), priorities
 
@@ -191,18 +197,19 @@ class DistributionalApex(ApexLearner):
         self._optimizer.zero_grad()
         obs, action, target = batch
         q, taus = self._model(obs)
-        q = q.gather(dim=-1, index=action.unsqueeze(1).expand(taus.shape).unsqueeze(-1)).squeeze(-1)
+        q = q.gather(-1, action.reshape(-1, 1, 1).repeat(1, taus.shape[-1], 1)).squeeze(-1)
 
         probabilities = probabilities.to(dtype=q.dtype, device=self._device)
         weight = probabilities.pow(-self._importance_sampling_exponent)
         weight.div_(weight.max())
 
-        loss = quantile_loss(target, q, taus).mul(weight).mean()
+        loss = quantile_regression_loss(q, taus, target).mul(weight).mean()
         loss.backward()
         grad_norm = torch.nn.utils.clip_grad_norm_(self._model.parameters(),
                                                    self._max_grad_norm)
         self._optimizer.step()
-        priorities = (target - q).mean(dim=-1).squeeze(-1).abs().cpu()
+        with torch.no_grad():
+            priorities = (target.mean(dim=-1) - q.mean(dim=-1)).abs().cpu()
 
         # Wait for previous update request
         priority_update_time = 0
