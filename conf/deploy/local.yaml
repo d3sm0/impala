@@ -7,6 +7,6 @@ training:
   num_workers: 8
   num_rollouts: 16
 agent:
-  learning_starts: 5000
+  learning_starts: 100
 task:
   env_id: "Pong-v5"

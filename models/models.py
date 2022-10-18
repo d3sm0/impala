@@ -61,9 +61,11 @@ class DuellingHead(nn.Module):
 class AtariActorCritic(nn.Module):
     def __init__(self, observation_space: Tuple[int, ...], action_space: int = 6, h_dim: int = 256):
         super(AtariActorCritic, self).__init__()
+        # TODO: verify init and layer norm
         self.body = models.common.AtariBody(observation_space)
-        self.projection = nn.Sequential(
-            models.common.layer_init_normed(nn.Linear(self.body.output_dim, h_dim), scale=1.4), nn.ReLU())
+        self.projection = nn.Sequential(nn.LayerNorm(self.body.output_dim),
+                                        models.common.layer_init_truncated(nn.Linear(self.body.output_dim, h_dim)),
+                                        nn.GELU())
         self.actor = models.common.layer_init_ortho(nn.Linear(h_dim, action_space), std=0.01)
         self.critic = models.common.layer_init_ortho(nn.Linear(h_dim, 1), std=1)
 

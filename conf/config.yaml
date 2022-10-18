@@ -42,6 +42,7 @@ training:
   seed: 123
   num_epochs: 1000
   steps_per_epoch: 5000
+  prefetch: 5
 
 
 optimizer:

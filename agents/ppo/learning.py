@@ -15,11 +15,12 @@ from rlmeta.core.types import Action, TimeStep
 from rlmeta.core.types import NestedTensor
 
 import losses
+import models.models
 from agents.core import Actor, Learner
 
 
 class PPOActor(Actor):
-    def __init__(self, model: ModelLike,
+    def __init__(self, model: models.models.AtariActorCritic,
                  replay_buffer: ReplayBufferLike,
                  deterministic_policy: bool = False,
                  gamma: float = 0.99,
@@ -74,7 +75,7 @@ class PPOActor(Actor):
         mask = torch.ones_like(not_done) * not_done.roll(1, dims=(0,))
         discount_t = (mask * not_done) * self._gamma
         target_t = rlego.lambda_returns(r, discount_t, values.squeeze(-1)[1:], self._lambda)  # noqa
-        return nested_utils.unbatch_nested(lambda x: x, (s, a, target_t, pi_ref), target_t.shape[0])
+        return nested_utils.unbatch_nested(lambda x: x.unsqueeze(1), (s, a, target_t, pi_ref), target_t.shape[0])
 
     async def _async_make_replay(self) -> List[NestedTensor]:
         return self._make_replay()
@@ -131,8 +132,8 @@ class PPOLearner(Learner):
             start = time.perf_counter()
             self._model.push()
             update_time = (time.perf_counter() - start) * 1000
-        metrics["debug/replay_sample_per_second"] = (self._batch_size / ((t1 - t0) * 1000))
-        metrics["debug/gradient_per_second"] = (self._batch_size / ((t2 - t1) * 1000))
+        metrics["debug/replay_sample_per_second"] = (self._batch_size  * 20 / ((t1 - t0) * 1000))
+        metrics["debug/gradient_per_second"] = (self._batch_size * 20 / ((t2 - t1) * 1000))
         metrics["debug/total_time"] = (time.perf_counter() - t0) * 1000
         metrics["debug/forward_dt"] = (t2 - t1) * 1000
         metrics["debug/update_time"] = update_time

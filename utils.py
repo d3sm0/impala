@@ -110,7 +110,8 @@ def create_workers(cfg: Config, ctrl: Controller, infer_model: RemotableModel, r
     train_ctrl = Remote(ctrl, cfg.distributed.c_server_name, cfg.distributed.c_server_addr, timeout=TIMEOUT)
     train_rb = None
     if rb is not None:
-        train_rb = RemoteReplayBuffer(rb, cfg.distributed.r_server_name, cfg.distributed.r_server_addr, timeout=TIMEOUT)
+        train_rb = RemoteReplayBuffer(rb, cfg.distributed.r_server_name, cfg.distributed.r_server_addr, timeout=TIMEOUT,
+                                      prefetch=cfg.training.prefetch)
     return train_ctrl, infer_model, train_rb
 
 

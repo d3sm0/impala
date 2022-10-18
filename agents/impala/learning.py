@@ -1,7 +1,9 @@
 import time
 from typing import Dict, List, Optional
 
+import functorch
 import moolib
+import rlego
 import rlmeta.utils.nested_utils as nested_utils
 import torch
 from rlmeta.core.model import ModelLike
@@ -9,7 +11,6 @@ from rlmeta.core.replay_buffer import ReplayBufferLike
 from rlmeta.core.types import Action, TimeStep
 from rlmeta.core.types import NestedTensor
 
-import losses
 from agents.core import Actor, Learner
 
 
@@ -53,7 +54,7 @@ class ImpalaActor(Actor):
         obs = self._last_transition
         act, action_info = action
         next_obs, reward, done, _ = next_timestep
-        self._trajectory.stack((obs, act, reward, next_obs, done, action_info["logpi"], action_info["v"]))
+        self._trajectory.stack((obs, act, reward, next_obs, done, action_info["logpi"]))
         self._last_transition = next_obs.clone()
 
     async def async_update(self) -> None:
@@ -63,11 +64,11 @@ class ImpalaActor(Actor):
                 await self._async_send_replay(replay)
 
     def _make_replay(self) -> List[NestedTensor]:
-        s, a, r, s1, d, pi_ref, values = self._trajectory.get()
+        s, a, r, _, d, pi_ref = self._trajectory.get()
         not_done = torch.logical_not(d)
         mask = torch.ones_like(not_done) * not_done.roll(1, dims=(0,))
         discount_t = (mask * not_done) * self._gamma
-        return [s, a, r, s1, discount_t, pi_ref]
+        return [s, a, r, discount_t, pi_ref]
 
     async def _async_make_replay(self) -> List[NestedTensor]:
         return self._make_replay()
@@ -112,34 +113,62 @@ class ImpalaLearner(Learner):
     def train_step(self):
         t0 = time.perf_counter()
         _, batch, _ = self._replay_buffer.sample(self._batch_size)
-        batch = nested_utils.map_nested(lambda x: x.to(self.device()).squeeze(dim=-1), batch)
+        n_samples = self._batch_size * batch[0][0].shape[0]
+        batch = nested_utils.map_nested(lambda x: x.to(self.device()), batch)
         t1 = time.perf_counter()
         metrics = self._train_step(batch)
         t2 = time.perf_counter()
         update_time = 0
         self._step_count += 1
         if self._step_count % self._model_push_period == 0:
-            start  = time.perf_counter()
+            start = time.perf_counter()
             self._model.push()
             update_time = time.perf_counter() - start
-        metrics["debug/replay_sample_per_second"] = (self._batch_size / ((t1 - t0) * 1000))
-        metrics["debug/gradient_per_second"] = (self._batch_size / ((t2 - t1) * 1000))
+        metrics["debug/replay_sample_per_second"] = (n_samples / ((t1 - t0) * 1000))
+        metrics["debug/gradient_per_second"] = (n_samples / ((t2 - t1) * 1000))
         metrics["debug/total_time"] = (time.perf_counter() - t0) * 1000
-        metrics["debug/forward_dt"] = (t2 - t1) * 1000
+        metrics["debug/forward_dt"] = (t2 - t1) * 1000 / self._batch_size
         metrics["debug/update_time"] = update_time
         return metrics
 
     def _train_step(self, batch: NestedTensor) -> Dict[str, float]:
         self._optimizer.zero_grad()
-        metrics = {}
-        for b in nested_utils.unbatch_nested(lambda x: x, batch, self._batch_size):
-            loss, metrics = losses.impala_loss(b, self._model, entropy_cost=self._entropy_coeff)
-            loss.backward()
+        s, a, r, discount_t, pi_ref = nested_utils.collate_nested(lambda x: torch.stack(x).squeeze(dim=-1), batch)
+        pi, values = self._model.forward(s.flatten(0, 1))
+        pi = pi.reshape(s.shape[0], s.shape[1], -1)
+        values = values.reshape(s.shape[0], s.shape[1])
+
+        t0 = time.perf_counter()
+        pi = torch.distributions.Categorical(logits=pi)
+        pi_ref = torch.distributions.Categorical(logits=pi_ref)
+        rho_tm1 = torch.exp(pi.log_prob(a) - pi_ref.log_prob(a))
+        t1 = time.perf_counter()
+
+        t2 = time.perf_counter()
+        adv, err, _ = functorch.vmap(rlego.vtrace_td_error_and_advantage)(values[:, :-1], values[:, 1:].detach(),
+                                                                          r[:, :-1],
+                                                                          discount_t[:, :-1], rho_tm1[:, :-1].detach())
+        t3 = time.perf_counter()
+
+        pg_loss = (pi.log_prob(a)[:, :-1] * adv).mean()
+        value_loss = err.pow(2).mean()
+        entropy_loss = pi.entropy().mean()
+
+        loss = - pg_loss + value_loss - self._entropy_coeff * entropy_loss
+        loss.backward()
+        t4 = time.perf_counter()
+
         grad_norm = torch.nn.utils.clip_grad_norm_(self._model.parameters(),
                                                    self._max_grad_norm)
-        metrics['train/grad_norm'] = grad_norm
+        # metrics['train/grad_norm'] = grad_norm
+        # metrics["debug/one_step"] = end_time * 1000
 
         self._optimizer.step()
         self._optimizer.zero_grad()
-
+        metrics = {
+            "debug/one_step": (time.perf_counter() - t0) * 1000,
+            "debug/evaluation": (t1 - t0) * 1000,
+            "debug/td_trace": (t3 - t2) * 1000,
+            "debug/backa": (t4 - t3) * 1000,
+        }
         return metrics
