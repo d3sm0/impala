@@ -1,7 +1,6 @@
 import time
 from typing import Dict, List, Optional
 
-import functorch
 import moolib
 import rlego
 import rlmeta.utils.nested_utils as nested_utils
@@ -13,6 +12,22 @@ from rlmeta.core.types import NestedTensor
 
 from agents.core import Actor, Learner
 
+
+# try:
+#     import functorch
+#
+#     batched_vtrace = functorch.vmap(rlego.vtrace_td_error_and_advantage)
+# except ImportError:
+def batched_vtrace(*batch):
+    sequence = nested_utils.unbatch_nested(lambda x: x, batch, batch[0].shape[0])
+    results = []
+    for sub_seq in sequence:
+        results.append(rlego.vtrace_td_error_and_advantage(*sub_seq))
+    results = nested_utils.collate_nested(torch.stack, results)
+    return results
+
+
+#
 
 class ImpalaActor(Actor):
     def __init__(self, model: ModelLike,
@@ -132,23 +147,19 @@ class ImpalaLearner(Learner):
         return metrics
 
     def _train_step(self, batch: NestedTensor) -> Dict[str, float]:
-        self._optimizer.zero_grad()
+        self._optimizer.zero_grad(set_to_none=True)
         s, a, r, discount_t, pi_ref = nested_utils.collate_nested(lambda x: torch.stack(x).squeeze(dim=-1), batch)
         pi, values = self._model.forward(s.flatten(0, 1))
         pi = pi.reshape(s.shape[0], s.shape[1], -1)
         values = values.reshape(s.shape[0], s.shape[1])
-
-        t0 = time.perf_counter()
         pi = torch.distributions.Categorical(logits=pi)
         pi_ref = torch.distributions.Categorical(logits=pi_ref)
         rho_tm1 = torch.exp(pi.log_prob(a) - pi_ref.log_prob(a))
-        t1 = time.perf_counter()
 
-        t2 = time.perf_counter()
-        adv, err, _ = functorch.vmap(rlego.vtrace_td_error_and_advantage)(values[:, :-1], values[:, 1:].detach(),
-                                                                          r[:, :-1],
-                                                                          discount_t[:, :-1], rho_tm1[:, :-1].detach())
-        t3 = time.perf_counter()
+        adv, err, _ = batched_vtrace(values[:, :-1], values[:, 1:],
+                                     r[:, :-1],
+                                     discount_t[:, :-1],
+                                     rho_tm1[:, :-1])
 
         pg_loss = (pi.log_prob(a)[:, :-1] * adv).mean()
         value_loss = err.pow(2).mean()
@@ -156,19 +167,20 @@ class ImpalaLearner(Learner):
 
         loss = - pg_loss + value_loss - self._entropy_coeff * entropy_loss
         loss.backward()
-        t4 = time.perf_counter()
+        metrics = {
+
+            "train/loss": loss.detach(),
+            "train/entropy": entropy_loss,
+            "train/td": value_loss.detach(),
+            "train/pg": pg_loss.detach(),
+            "train/kl": torch.distributions.kl_divergence(pi, pi_ref).mean().detach(),
+            "train/ratio": rho_tm1.mean().detach(),
+
+        }
 
         grad_norm = torch.nn.utils.clip_grad_norm_(self._model.parameters(),
                                                    self._max_grad_norm)
-        # metrics['train/grad_norm'] = grad_norm
-        # metrics["debug/one_step"] = end_time * 1000
+        metrics['train/grad_norm'] = grad_norm
 
         self._optimizer.step()
-        self._optimizer.zero_grad()
-        metrics = {
-            "debug/one_step": (time.perf_counter() - t0) * 1000,
-            "debug/evaluation": (t1 - t0) * 1000,
-            "debug/td_trace": (t3 - t2) * 1000,
-            "debug/backa": (t4 - t3) * 1000,
-        }
         return metrics
