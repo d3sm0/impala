@@ -1,4 +1,4 @@
-from typing import Tuple
+from typing import Tuple, Optional
 
 import numpy as np
 import torch
@@ -7,6 +7,7 @@ from torch import nn as nn
 
 
 # TODO: this architecture  is not quite right. Missing layer norm
+# or apply torch.nn.init.spectral_norm
 class ResidualBlock(nn.Module):
 
     def __init__(self, channels, scale):
@@ -33,7 +34,7 @@ class ResidualBlock(nn.Module):
         return x + inputs
 
 
-class ConvSequence(nn.Module):
+class ImpalaCNNBlock(nn.Module):
 
     def __init__(self, input_shape, out_channels, scale):
         super().__init__()
@@ -65,22 +66,15 @@ class ImpalaCNNLarge(nn.Module):
     def __init__(self, input_shape: Tuple[int, ...]):
         super(ImpalaCNNLarge, self).__init__()
         c, h, w = input_shape
-        shape = (c, h, w)
-        conv_seqs = []
-        chans = [16, 32, 32]
-        # Not fully sure about the logic behind this but its used in PPG code
-        scale = 1 / np.sqrt(len(chans))
-        for out_channels in chans:
-            conv_seq = ConvSequence(shape, out_channels, scale=scale)
-            shape = conv_seq.get_output_shape()
-            conv_seqs.append(conv_seq)
 
-        conv_seqs += [
+        self.body = nn.Sequential(
+            ImpalaCNNBlock(c, 16, scale=1.0),
+            ImpalaCNNBlock(16, 32, scale=1.0),
+            ImpalaCNNBlock(32, 32, scale=1.0),
+            nn.AdaptiveMaxPool2d((8, 8)),
             nn.ReLU(),
-            nn.Flatten(),
-        ]
-        self._output_dim = np.prod(shape)
-        self.body = nn.Sequential(*conv_seqs)
+            nn.Flatten()
+        )
 
     def forward(self, x):
         return self.body(x)
@@ -100,6 +94,7 @@ class ImpalaCNNSmall(nn.Module):
             nn.ReLU(),
             layer_init_normed(nn.Conv2d(in_channels=16, out_channels=32, kernel_size=4, stride=2), norm_dim=(1, 2, 3),
                               scale=1),
+            nn.AdaptiveMaxPool2d((6, 6)),
             nn.ReLU(),
             nn.Flatten(),
         )
@@ -143,28 +138,35 @@ class LinearBody(nn.Module):
         return self.body(x)
 
 
-def layer_init_truncated(layer, bias_const=0.0):
+def layer_init_std(layer):
+    if isinstance(layer, nn.Conv2d):
+        fan_in, _ = torch.nn.init._calculate_fan_in_and_fan_out(layer.weight)
+    else:
+        fan_in = layer.weight.shape[1]
+    std = 1.0 / np.sqrt(fan_in)
+    return std
+
+
+def layer_init_truncated(layer):
     with torch.no_grad():
-        if isinstance(layer, nn.Conv2d):
-            fan_in, _ = torch.nn.init._calculate_fan_in_and_fan_out(layer.weight)
-        else:
-            # the weight matrix is [out, in]
-            fan_in = layer.weight.shape[1]
-        std = 1.0 / np.sqrt(fan_in)
+        std = layer_init_std(layer)
         torch.nn.init.trunc_normal_(layer.weight, std=std)
-        torch.nn.init.constant_(layer.bias, bias_const)
+        torch.nn.init.constant_(layer.bias, 0.)
     return layer
 
 
-def layer_init_ortho(layer, std=np.sqrt(2), bias_const=0.0):
+def layer_init_ortho(layer, std: Optional[float] = None, bias_const=0.0):
     with torch.no_grad():
+        if std is None:
+            std = layer_init_std(layer)
         torch.nn.init.orthogonal_(layer.weight, std)
         torch.nn.init.constant_(layer.bias, bias_const)
     return layer
 
 
-def layer_init_normed(layer, norm_dim: Tuple = (1,), scale=0.1):
+def layer_init_normed(layer, norm_dim: Tuple = (1,)):
     with torch.no_grad():
+        scale = layer_init_std(layer)
         norm = layer.weight.norm(dim=norm_dim, p=2, keepdim=True)
         layer.weight.data.mul_(scale / norm)
         torch.nn.init.constant_(layer.bias, 0)

@@ -22,7 +22,7 @@ class ImplicitQuantileHead(nn.Module):
             nn.GELU()
         )
         self.q = models.common.layer_init_truncated(nn.Linear(d_model, action_dim))
-        # self.v = models.common.layer_init_truncated(nn.Linear(d_model, 1))
+        self.v = models.common.layer_init_truncated(nn.Linear(d_model, 1))
 
     def forward(self, input_data: torch.Tensor, tau: torch.Tensor = torch.tensor((0.5,))):
         tau = tau.to(input_data.device)
@@ -30,8 +30,8 @@ class ImplicitQuantileHead(nn.Module):
         h = input_data.unsqueeze(1) * embedded_tau
         h = self.project(h)
         q = self.q(h)
-        # v = self.v(h)
-        return q
+        v = self.v(h)
+        return v + q - q.mean(-1, keepdim=True)
 
 
 class QuantileLayer(nn.Module):

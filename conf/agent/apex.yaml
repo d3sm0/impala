@@ -11,3 +11,7 @@ learning_starts: 50000
 model_push_period: 10
 rollout_length: 100
 n_tau_samples: 8  # this is a feature for distributional, no need to create a new config
+
+optimizer:
+  lr: 0.0000625
+  eps: 1e-4

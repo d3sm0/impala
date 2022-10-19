@@ -7,3 +7,8 @@ entropy_cost: 0.0
 clip_coef: 0.1
 max_grad_norm: 0.5
 learning_starts: 1000
+
+optimizer:
+  lr: 1e-4
+  eps: 1e-5
+

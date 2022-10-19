@@ -12,7 +12,7 @@ class DistributionalDQN(nn.Module):
         super().__init__()
         obs_dim, = obs_dim
         self.body = nn.Sequential(
-            nn.Linear(obs_dim, h_dim),
+            models.common.layer_init_truncated(nn.Linear(obs_dim, h_dim)),
             nn.ReLU())
 
         self.q = models.quantile_layers.ImplicitQuantileHead(h_dim, action_dim, d_model=84)
@@ -30,7 +30,7 @@ class DQN(nn.Module):
         super().__init__()
         obs_dim, = obs_dim
         self.body = nn.Sequential(
-            nn.Linear(obs_dim, h_dim),
+            models.common.layer_init_truncated(nn.Linear(obs_dim, h_dim)),
             nn.ReLU())
 
         self.q = DuellingHead(h_dim, action_dim, h_dim=h_dim)
@@ -66,8 +66,8 @@ class AtariActorCritic(nn.Module):
         self.projection = nn.Sequential(nn.LayerNorm(self.body.output_dim),
                                         models.common.layer_init_truncated(nn.Linear(self.body.output_dim, h_dim)),
                                         nn.GELU())
-        self.actor = models.common.layer_init_ortho(nn.Linear(h_dim, action_space), std=0.01)
-        self.critic = models.common.layer_init_ortho(nn.Linear(h_dim, 1), std=1)
+        self.actor = models.common.layer_init_truncated(nn.Linear(h_dim, action_space))
+        self.critic = models.common.layer_init_truncated(nn.Linear(h_dim, 1))
 
     def forward(self, x):
         x = x / 255.

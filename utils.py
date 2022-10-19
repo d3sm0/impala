@@ -3,7 +3,11 @@ import random
 import time
 from typing import Optional
 
-# import aim
+try:
+    import aim
+except ImportError:
+    print(f"aim not available")
+    pass
 import numpy as np
 import torch
 from rlmeta.agents.agent import AgentFactory
@@ -51,24 +55,18 @@ class Run:
     def save(self, *args, **kwargs):
         pass
 
-    def log(self, metrics, step):
+    def log(self, metrics, step=None):
         for k, v in metrics.items():
             self.run.track(v, k, step=step)
 
-    def add_figures(self, figures, step):
+    def add_figures(self, figures, step=None):
         for k, v in figures.items():
             self.run.track(aim.Figure(v), k, step=step)
 
-    def __del__(self):
-        self.run.finalize()
-
 
 class Writer:
-    def __init__(self, disabled):
+    def __init__(self, disabled=False):
         self.run = Run(disabled)
-
-    def __del__(self):
-        del self.run
 
 
 class RecordMetrics(EpisodeCallbacks):

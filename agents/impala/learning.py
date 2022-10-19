@@ -12,19 +12,18 @@ from rlmeta.core.types import NestedTensor
 
 from agents.core import Actor, Learner
 
+try:
+    import functorch
 
-# try:
-#     import functorch
-#
-#     batched_vtrace = functorch.vmap(rlego.vtrace_td_error_and_advantage)
-# except ImportError:
-def batched_vtrace(*batch):
-    sequence = nested_utils.unbatch_nested(lambda x: x, batch, batch[0].shape[0])
-    results = []
-    for sub_seq in sequence:
-        results.append(rlego.vtrace_td_error_and_advantage(*sub_seq))
-    results = nested_utils.collate_nested(torch.stack, results)
-    return results
+    batched_vtrace = functorch.vmap(rlego.vtrace_td_error_and_advantage)
+except ImportError:
+    def batched_vtrace(*batch):
+        sequence = nested_utils.unbatch_nested(lambda x: x, batch, batch[0].shape[0])
+        results = []
+        for sub_seq in sequence:
+            results.append(rlego.vtrace_td_error_and_advantage(*sub_seq))
+        results = nested_utils.collate_nested(torch.stack, results)
+        return results
 
 
 #

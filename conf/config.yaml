@@ -34,7 +34,7 @@ evaluation:
   num_rollouts: 8
   seed: 456
   deterministic_policy: true
-  num_episodes: 1
+  num_episodes: 4
 
 training:
   num_workers: 4
@@ -43,9 +43,4 @@ training:
   num_epochs: 1000
   steps_per_epoch: 5000
   prefetch: 5
-
-
-optimizer:
-  lr: 1e-4
-  eps: 1e-5
 

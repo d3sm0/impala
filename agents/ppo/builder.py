@@ -2,10 +2,10 @@ import copy
 from typing import Optional
 
 import torch
-from rlmeta.samplers import UniformSampler
 from rlmeta.agents.agent import AgentFactory
 from rlmeta.core.model import ModelLike
 from rlmeta.core.replay_buffer import ReplayBuffer, ReplayBufferLike
+from rlmeta.samplers import UniformSampler
 from rlmeta.storage import CircularBuffer
 
 from agents.core import Actor, Builder
@@ -28,17 +28,19 @@ class PPOBuilder(Builder):
         self._actor_model = None
 
     def make_replay(self):
+        sampler = UniformSampler()
+        sampler.reset(self.cfg.training.seed)
         return ReplayBuffer(
             CircularBuffer(self.cfg.agent.replay_buffer_size, collate_fn=torch.cat),
-            UniformSampler()
+            sampler
         )
 
     def make_actor(self, model: ModelLike, rb: Optional[ReplayBufferLike] = None, deterministic: bool = False):
         return PPOFactory(model, rb, deterministic)
 
     def make_learner(self, model: ModelLike, rb: ReplayBufferLike):
-        optimizer = torch.optim.Adam(self._learner_model.parameters(), lr=self.cfg.optimizer.lr,
-                                     eps=self.cfg.optimizer.eps)
+        optimizer = torch.optim.Adam(self._learner_model.parameters(), lr=self.cfg.agent.optimizer.lr,
+                                     eps=self.cfg.agent.optimizer.eps)
         return PPOLearner(model, rb, optimizer)
 
     def make_network(self, env_spec):

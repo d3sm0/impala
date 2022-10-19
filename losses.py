@@ -1,5 +1,4 @@
 # import functorch
-import functorch
 import rlego
 import torch
 

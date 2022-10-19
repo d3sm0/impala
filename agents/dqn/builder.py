@@ -98,8 +98,8 @@ class ApexDQNBuilder(Builder):
                                    rollout_length=self.cfg.agent.rollout_length)
 
     def make_learner(self, model: ModelLike, rb: ReplayBufferLike):
-        optimizer = torch.optim.Adam(self._learner_model.parameters(), lr=self.cfg.optimizer.lr,
-                                     eps=self.cfg.optimizer.eps)
+        optimizer = torch.optim.Adam(self._learner_model.parameters(), lr=self.cfg.agent.optimizer.lr,
+                                     eps=self.cfg.agent.optimizer.eps)
 
         # optimizer = torch.optim.RMSprop(self._learner_model.parameters(), lr=0.00025 / 4, alpha=0.95, eps=1.5e-7)
         learner = ApexLearner(
@@ -121,11 +121,11 @@ class ApexDQNBuilder(Builder):
         return model
 
 
-class DistributionalApexBuilder(ApexDQNBuilder):
+class ApexDistributionalBuilder(ApexDQNBuilder):
 
     def make_learner(self, model: ModelLike, rb: ReplayBufferLike):
-        optimizer = torch.optim.Adam(self._learner_model.parameters(), lr=self.cfg.optimizer.lr,
-                                     eps=self.cfg.optimizer.eps)
+        optimizer = torch.optim.Adam(self._learner_model.parameters(), lr=self.cfg.agent.optimizer.lr,
+                                     eps=self.cfg.agent.optimizer.eps)
 
         # optimizer = torch.optim.RMSprop(self._learner_model.parameters(), lr=0.00025 / 4, alpha=0.95, eps=1.5e-7)
         learner = DistributionalApex(

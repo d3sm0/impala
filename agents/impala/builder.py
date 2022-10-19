@@ -28,17 +28,20 @@ class ImpalaBuilder(Builder):
         self._actor_model = None
 
     def make_replay(self):
+        sampler = UniformSampler()
+        sampler.reset(self.cfg.training.seed)
         return ReplayBuffer(
             CircularBuffer(self.cfg.agent.replay_buffer_size),
-            UniformSampler()
+            sampler
         )
 
     def make_actor(self, model: ModelLike, rb: Optional[ReplayBufferLike] = None, deterministic: bool = False):
-        return ImpalaActorFactory(model, rb, deterministic)
+        # TODO: check why impala agents  that are stochastic get stuck
+        return ImpalaActorFactory(model, rb, False)
 
     def make_learner(self, model: ModelLike, rb: ReplayBufferLike):
-        optimizer = torch.optim.Adam(self._learner_model.parameters(), lr=self.cfg.optimizer.lr,
-                                     eps=self.cfg.optimizer.eps)
+        optimizer = torch.optim.Adam(self._learner_model.parameters(), lr=self.cfg.agent.optimizer.lr,
+                                     eps=self.cfg.agent.optimizer.eps)
         # optimizer = torch.optim.RMSprop(
         #     self._learner_model.parameters(), alpha=0.95, eps=1.5e-7, lr=0.00025 / 4
         # )

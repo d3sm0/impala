@@ -20,8 +20,6 @@ import envs
 import utils
 import wandb
 from agents.distributed_agent import DistributedAgent
-from agents.dqn.builder import ApexDQNBuilder
-from agents.ppo.builder import PPOBuilder
 from agents.impala.builder import ImpalaBuilder
 
 
@@ -54,10 +52,12 @@ def main(cfg):
                                                    #          cfg.task.benchmark]
                                                    },
                                      extra_modules=["cuda/11.1/cudnn/8.0", "python/3.7", "gcc", "libffi"])
-    builder = ApexDQNBuilder(cfg)
-    # builder = ImpalaBuilder(cfg)
+    # builder = ApexDQNBuilder(cfg)
+    # builder = ApexDistributionalBuilder(cfg)
+    # builder = PPOBuilder(cfg)
+    builder = ImpalaBuilder(cfg)
 
-    env_factory = envs.EnvFactory(cfg.task.env_id)
+    env_factory = envs.EnvFactory(cfg.task.env_id, library_str=cfg.task.benchmark)
     # TODO: make spec here
     train_model = builder.make_network(env_factory.get_spec())
     rb = builder.make_replay()
@@ -71,7 +71,8 @@ def main(cfg):
     e_ctrl, e_model, _ = utils.create_workers(cfg, ctrl, builder.actor_model)
 
     e_agent_fac = builder.make_actor(e_model, deterministic=True)
-    evaluate_loop = utils.create_evaluation_loops(cfg, envs.EnvFactory(cfg.task.env_id, train=False), e_agent_fac,
+    evaluate_loop = utils.create_evaluation_loops(cfg, envs.EnvFactory(cfg.task.env_id, library_str=cfg.task.benchmark,
+                                                                       train=False), e_agent_fac,
                                                   e_ctrl)
 
     loops = LoopList([train_loop, evaluate_loop])

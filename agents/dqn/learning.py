@@ -44,6 +44,7 @@ class ApexActor(Actor):
         obs = self._last_observation
         action, action_info = action
         next_obs, reward, done, _ = next_timestep
+        # TODO: include discount in step
         self._trajectory.stack((obs, action, reward, done, action_info["q"], action_info["v"]))
         self._last_observation = next_obs
 
@@ -55,14 +56,16 @@ class ApexActor(Actor):
 
     def _make_replay(self) -> Tuple[List[NestedTensor], torch.Tensor]:
         # TODO : this very likely is buggy make a test for it
-        s_tm1, a_t, r_t, d_t, q_pi_t, q_star_t = self._trajectory.get()
-        s_tm1, a_t, r_t, d_t = nested_utils.map_nested(lambda x: x.squeeze(-1)[:-1], (s_tm1, a_t, r_t, d_t))
+        s_tm1, a_t, r_t, d_t, q_pi_t, q_star_t = nested_utils.map_nested(lambda x: x.squeeze(dim=-1), self._trajectory.get())
         not_done = torch.logical_not(d_t)
-        discount_t = (not_done.roll(1, dims=0) * torch.ones_like(not_done)) * self._gamma
+        # we need this mask because the trajectory does not reset on terminal, thus we might have terminal states in sequencee
+        mask = not_done.roll(1, dims=0)
+        discount_t = not_done * self._gamma
         # replace the last element with q_star
-        target = rlego.n_step_bootstrapped_returns(r_t, discount_t, q_star_t[1:].squeeze(dim=-1), n=self._n_step)
+        target = rlego.n_step_bootstrapped_returns(r_t[:-1], discount_t[:-1], q_star_t[1:], n=self._n_step)
         priorities = (target - q_pi_t[:-1].squeeze(dim=-1)).abs()
-        return nested_utils.unbatch_nested(lambda x: x.unsqueeze(1), (s_tm1, a_t, target), target.shape[0]), priorities
+        return nested_utils.unbatch_nested(lambda x: x.unsqueeze(1), (s_tm1, a_t, target, mask),
+                                           target.shape[0]), priorities
 
 
 class ApexDistributionalActor(ApexActor):
@@ -157,21 +160,20 @@ class ApexLearner(Learner):
     def _train_step(self, keys: torch.Tensor, batch: NestedTensor,
                     probabilities: torch.Tensor) -> Dict[str, float]:
         self._optimizer.zero_grad()
-        obs, action, target = batch
+        obs, action, target, mask = batch
         q = self._model(obs)
         q = q.gather(1, action.unsqueeze(-1)).squeeze(-1)
 
         probabilities = probabilities.to(dtype=q.dtype, device=self._device)
         weight = probabilities.pow(-self._importance_sampling_exponent)
         weight.div_(weight.max())
-
-        loss = 0.5 * ((target - q).pow(2) * weight).mean()
+        err = (target - q).mul(mask)
+        loss = 0.5 * (err.pow(2) * weight).mean()
         loss.backward()
         grad_norm = torch.nn.utils.clip_grad_norm_(self._model.parameters(),
                                                    self._max_grad_norm)
         self._optimizer.step()
-        with torch.no_grad():
-            priorities = (target - q).squeeze(-1).abs().cpu()
+        priorities = err.detach().abs().cpu()
 
         # Wait for previous update request
         priority_update_time = 0
