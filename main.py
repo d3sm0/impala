@@ -20,6 +20,7 @@ import envs
 import utils
 import wandb
 from agents.distributed_agent import DistributedAgent
+from agents.dqn.builder import ApexDQNBuilder
 from agents.impala.builder import ImpalaBuilder
 
 
@@ -52,10 +53,10 @@ def main(cfg):
                                                    #          cfg.task.benchmark]
                                                    },
                                      extra_modules=["cuda/11.1/cudnn/8.0", "python/3.7", "gcc", "libffi"])
-    # builder = ApexDQNBuilder(cfg)
+    builder = ApexDQNBuilder(cfg)
     # builder = ApexDistributionalBuilder(cfg)
     # builder = PPOBuilder(cfg)
-    builder = ImpalaBuilder(cfg)
+    # builder = ImpalaBuilder(cfg)
 
     env_factory = envs.EnvFactory(cfg.task.env_id, library_str=cfg.task.benchmark)
     # TODO: make spec here
