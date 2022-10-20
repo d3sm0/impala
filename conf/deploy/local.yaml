@@ -5,7 +5,8 @@ distributed:
   host: ""
 training:
   num_workers: 8
-  num_rollouts: 16
+  num_rollouts: 48
+  steps_per_epoch: 1000
 agent:
   learning_starts: 100
 # task:

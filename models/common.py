@@ -13,7 +13,7 @@ class ResidualBlock(nn.Module):
     def __init__(self, channels, scale):
         super().__init__()
         # scale = (1/3**0.5 * 1/2**0.5)**0.5 # For default IMPALA CNN this is the final scale value in the PPG code
-        #scale = np.sqrt(scale)
+        # scale = np.sqrt(scale)
         conv0 = nn.Conv2d(in_channels=channels,
                           out_channels=channels,
                           kernel_size=3,
@@ -53,7 +53,7 @@ class ImpalaCNNBlock(nn.Module):
         x = nn.functional.max_pool2d(x, kernel_size=3, stride=2, padding=1)
         x = self.res_block0(x)
         x = self.res_block1(x)
-        #assert x.shape[1:] == self.get_output_shape()
+        # assert x.shape[1:] == self.get_output_shape()
         return x
 
     def get_output_shape(self):
@@ -70,7 +70,7 @@ class ImpalaCNNLarge(nn.Module):
             ImpalaCNNBlock(c, 16, scale=1.0),
             ImpalaCNNBlock(16, 32, scale=1.0),
             ImpalaCNNBlock(32, 32, scale=1.0),
-            #nn.AdaptiveMaxPool2d((8, 8)),
+            # nn.AdaptiveMaxPool2d((8, 8)),
             nn.ReLU(),
             nn.Flatten()
         )
@@ -91,7 +91,7 @@ class ImpalaCNNSmall(nn.Module):
             nn.Conv2d(in_channels=c, out_channels=16, kernel_size=8, stride=4),
             nn.ReLU(),
             nn.Conv2d(in_channels=16, out_channels=32, kernel_size=4, stride=2),
-            #nn.AdaptiveMaxPool2d((6, 6)),
+            # nn.AdaptiveMaxPool2d((6, 6)),
             nn.ReLU(),
             nn.Flatten(),
         )
@@ -134,28 +134,39 @@ class LinearBody(nn.Module):
         return self.body(x)
 
 
-def layer_init_std(layer):
+def layer_init_std(layer, scale=1.):
     if isinstance(layer, nn.Conv2d):
         fan_in, _ = torch.nn.init._calculate_fan_in_and_fan_out(layer.weight)
     else:
         fan_in = layer.weight.shape[1]
-    std = 1.0 / np.sqrt(fan_in)
-    return std
+    scale /= max(1, fan_in)
+    return scale
 
 
-def layer_init_truncated(layer):
+def layer_init_truncated(layer, scale=1.):
     with torch.no_grad():
-        std = layer_init_std(layer)
+        std = layer_init_std(layer, scale=scale)
+        distribution_stddev = np.asarray(.87962566103423978, dtype=np.float32)
+        std = np.sqrt(std) / distribution_stddev
+        std = std / distribution_stddev
         torch.nn.init.trunc_normal_(layer.weight, std=std)
         torch.nn.init.constant_(layer.bias, 0.)
     return layer
 
 
-def layer_init_ortho(layer, std: Optional[float] = None, bias_const=0.0):
+def layer_init_uniform(layer, scale: float = 1.):
     with torch.no_grad():
-        if std is None:
-            std = layer_init_std(layer)
-        torch.nn.init.orthogonal_(layer.weight, std)
+        scale = layer_init_std(layer, scale=scale)
+        scale = np.sqrt(3 * scale)
+        torch.nn.init.uniform_(layer.weight, -scale, scale)
+        torch.nn.init.constant_(layer.bias, 0.)
+    return layer
+
+
+def layer_init_ortho(layer, scale: Optional[float] = None, bias_const=0.0):
+    with torch.no_grad():
+        scale = layer_init_std(layer, scale=scale)
+        torch.nn.init.orthogonal_(layer.weight, np.sqrt(scale))
         torch.nn.init.constant_(layer.bias, bias_const)
     return layer
 
