@@ -1,6 +1,7 @@
 defaults:
   - _self_
-  - agent: apex
+  - agent: sac
+  - task: mujoco
   - override hydra/hydra_logging: disabled
   - override hydra/job_logging: disabled
 
@@ -24,10 +25,6 @@ distributed:
   infer_device: "cuda:0"
   host: ""
 
-task:
-  env_id: "Breakout-v5"
-  benchmark: "atari"
-  total_frames: 100000000 # 10M samples i.e. 40M frames
 
 evaluation:
   num_workers: 4

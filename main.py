@@ -20,8 +20,7 @@ import envs
 import utils
 import wandb
 from agents.distributed_agent import DistributedAgent
-from agents.dqn.builder import ApexDQNBuilder
-from agents.impala.builder import ImpalaBuilder
+from agents.sac.builder import SACBuilder
 
 
 # from agents.ppo.builder import PPOBuilder
@@ -45,7 +44,7 @@ def main(cfg):
 
     writer = experiment_buddy.deploy(host=cfg.distributed.host,
                                      disabled=sys.gettrace() is not None,
-                                     wandb_kwargs={"project": "impala",
+                                     wandb_kwargs={"project": "control",
                                                    "settings": wandb.Settings(start_method="thread"),
                                                    "config": omegaconf.OmegaConf.to_container(
                                                        cfg, resolve=True),
@@ -53,10 +52,11 @@ def main(cfg):
                                                    #          cfg.task.benchmark]
                                                    },
                                      extra_modules=["cuda/11.1/cudnn/8.0", "python/3.7", "gcc", "libffi"])
-    builder = ApexDQNBuilder(cfg)
+    # builder = ApexDQNBuilder(cfg)
     # builder = ApexDistributionalBuilder(cfg)
     # builder = PPOBuilder(cfg)
     # builder = ImpalaBuilder(cfg)
+    builder = SACBuilder(cfg)
 
     env_factory = envs.EnvFactory(cfg.task.env_id, library_str=cfg.task.benchmark)
     # TODO: make spec here
@@ -88,7 +88,7 @@ def main(cfg):
     agent.connect()
     for epoch in range(cfg.training.num_epochs):
         total_samples = agent.train(cfg.training.steps_per_epoch)
-        agent.eval(cfg.evaluation.num_rollouts, keep_training_loops=True)
+        agent.eval(cfg.evaluation.num_rollouts, keep_training_loops=False)
         if total_samples > cfg.task.total_frames:
             break
     loops.terminate()
