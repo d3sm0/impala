@@ -9,6 +9,6 @@ training:
   steps_per_epoch: 1000
 agent:
   learning_starts: 100
-# task:
-#  # env_id: "Pong-v5"
+task:
+  env_id: "InvertedDoublePendulum-v4"
 

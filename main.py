@@ -42,16 +42,17 @@ def main(cfg):
     else:
         cfg = omegaconf.OmegaConf.merge(cfg, omegaconf.OmegaConf.load("conf/deploy/local.yaml"))
 
-    writer = experiment_buddy.deploy(host=cfg.distributed.host,
-                                     disabled=sys.gettrace() is not None,
-                                     wandb_kwargs={"project": "control",
-                                                   "settings": wandb.Settings(start_method="thread"),
-                                                   "config": omegaconf.OmegaConf.to_container(
-                                                       cfg, resolve=True),
-                                                   # "tags": [cfg.distributed.host,
-                                                   #          cfg.task.benchmark]
-                                                   },
-                                     extra_modules=["cuda/11.1/cudnn/8.0", "python/3.7", "gcc", "libffi"])
+    #writer = experiment_buddy.deploy(host=cfg.distributed.host,
+    #                                 disabled=sys.gettrace() is not None,
+    #                                 wandb_kwargs={"project": "control",
+    #                                               "settings": wandb.Settings(start_method="thread"),
+    #                                               "config": omegaconf.OmegaConf.to_container(
+    #                                                   cfg, resolve=True),
+    #                                               # "tags": [cfg.distributed.host,
+    #                                               #          cfg.task.benchmark]
+    #                                               },
+    #                                 extra_modules=["cuda/11.1/cudnn/8.0", "python/3.7", "gcc", "libffi"])
+    writer = utils.Writer()
     # builder = ApexDQNBuilder(cfg)
     # builder = ApexDistributionalBuilder(cfg)
     # builder = PPOBuilder(cfg)
