@@ -44,7 +44,7 @@ def main(cfg):
 
     writer = experiment_buddy.deploy(host=cfg.distributed.host,
                                      disabled=sys.gettrace() is not None,
-                                     wandb_kwargs={"project": "control",
+                                     wandb_kwargs={"project": "impala",
                                                    "settings": wandb.Settings(start_method="thread"),
                                                    "config": omegaconf.OmegaConf.to_container(
                                                        cfg, resolve=True),

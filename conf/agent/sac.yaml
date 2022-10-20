@@ -1,0 +1,18 @@
+replay_buffer_size: 1000000
+update_epochs: 2
+push_period: 10
+rollout_length: 100
+target_network_frequency: 1
+n_steps: 5
+exploration_noise: 0.3
+batch_size: 256
+tau: 0.005
+update_target_every: 100
+max_grad_norm: 40
+alpha: 0.2
+learning_starts: 1000
+optimizer:
+  eps: 1e-5
+  actor_lr: 0.0003
+  critic_lr: 0.0003
+
