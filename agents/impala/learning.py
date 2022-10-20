@@ -16,7 +16,7 @@ try:
     import functorch
 
     batched_vtrace = functorch.vmap(rlego.vtrace_td_error_and_advantage)
-except ImportError:
+except RuntimeError:
     def batched_vtrace(*batch):
         sequence = nested_utils.unbatch_nested(lambda x: x, batch, batch[0].shape[0])
         results = []

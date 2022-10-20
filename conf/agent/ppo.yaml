@@ -1,5 +1,4 @@
-replay_buffer_size: 10000
-prefetch: 2
+replay_buffer_size: 20000
 batch_size: 256
 model_push_period: 8
 rollout_length: 128

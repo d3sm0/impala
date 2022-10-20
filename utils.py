@@ -82,7 +82,7 @@ class RecordMetrics(EpisodeCallbacks):
 def create_master(cfg: Config, ctrl: Controller, train_model: RemotableModel, rb: ReplayBuffer):
     assert train_model.training is True
     a_rb = RemoteReplayBuffer(rb, cfg.distributed.r_server_name, cfg.distributed.r_server_addr, timeout=TIMEOUT,
-                              prefetch=cfg.agent.prefetch)
+                              prefetch=cfg.training.prefetch)
     async_ctrl = Remote(ctrl, cfg.distributed.c_server_name, cfg.distributed.c_server_addr, timeout=TIMEOUT)
     async_model = DownstreamModel(train_model, cfg.distributed.m_server_name, cfg.distributed.m_server_addr,
                                   timeout=TIMEOUT)

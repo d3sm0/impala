@@ -3,7 +3,6 @@ learning_starts: 100
 rollout_length: 20
 batch_size: 8
 model_push_period: 10
-prefetch: 5
 entropy_cost: 0.01
 max_grad_norm: 40
 

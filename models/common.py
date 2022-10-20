@@ -13,17 +13,17 @@ class ResidualBlock(nn.Module):
     def __init__(self, channels, scale):
         super().__init__()
         # scale = (1/3**0.5 * 1/2**0.5)**0.5 # For default IMPALA CNN this is the final scale value in the PPG code
-        scale = np.sqrt(scale)
+        #scale = np.sqrt(scale)
         conv0 = nn.Conv2d(in_channels=channels,
                           out_channels=channels,
                           kernel_size=3,
                           padding=1)
-        self.conv0 = layer_init_normed(conv0, norm_dim=(1, 2, 3), scale=scale)
+        self.conv0 = conv0
         conv1 = nn.Conv2d(in_channels=channels,
                           out_channels=channels,
                           kernel_size=3,
                           padding=1)
-        self.conv1 = layer_init_normed(conv1, norm_dim=(1, 2, 3), scale=scale)
+        self.conv1 = conv1
 
     def forward(self, x):
         inputs = x
@@ -36,15 +36,14 @@ class ResidualBlock(nn.Module):
 
 class ImpalaCNNBlock(nn.Module):
 
-    def __init__(self, input_shape, out_channels, scale):
+    def __init__(self, in_channels, out_channels, scale):
         super().__init__()
-        self._input_shape = input_shape
         self._out_channels = out_channels
-        conv = nn.Conv2d(in_channels=self._input_shape[0],
+        conv = nn.Conv2d(in_channels=in_channels,
                          out_channels=self._out_channels,
                          kernel_size=3,
                          padding=1)
-        self.conv = layer_init_normed(conv, norm_dim=(1, 2, 3), scale=1.0)
+        self.conv = conv
         scale = scale / np.sqrt(2)
         self.res_block0 = ResidualBlock(self._out_channels, scale=scale)
         self.res_block1 = ResidualBlock(self._out_channels, scale=scale)
@@ -54,7 +53,7 @@ class ImpalaCNNBlock(nn.Module):
         x = nn.functional.max_pool2d(x, kernel_size=3, stride=2, padding=1)
         x = self.res_block0(x)
         x = self.res_block1(x)
-        assert x.shape[1:] == self.get_output_shape()
+        #assert x.shape[1:] == self.get_output_shape()
         return x
 
     def get_output_shape(self):
@@ -71,7 +70,7 @@ class ImpalaCNNLarge(nn.Module):
             ImpalaCNNBlock(c, 16, scale=1.0),
             ImpalaCNNBlock(16, 32, scale=1.0),
             ImpalaCNNBlock(32, 32, scale=1.0),
-            nn.AdaptiveMaxPool2d((8, 8)),
+            #nn.AdaptiveMaxPool2d((8, 8)),
             nn.ReLU(),
             nn.Flatten()
         )
@@ -89,12 +88,10 @@ class ImpalaCNNSmall(nn.Module):
         super(ImpalaCNNSmall, self).__init__()
         c, h, w = input_shape
         self.body = nn.Sequential(
-            layer_init_normed(nn.Conv2d(in_channels=c, out_channels=16, kernel_size=8, stride=4), norm_dim=(1, 2, 3),
-                              scale=1),
+            nn.Conv2d(in_channels=c, out_channels=16, kernel_size=8, stride=4),
             nn.ReLU(),
-            layer_init_normed(nn.Conv2d(in_channels=16, out_channels=32, kernel_size=4, stride=2), norm_dim=(1, 2, 3),
-                              scale=1),
-            nn.AdaptiveMaxPool2d((6, 6)),
+            nn.Conv2d(in_channels=16, out_channels=32, kernel_size=4, stride=2),
+            #nn.AdaptiveMaxPool2d((6, 6)),
             nn.ReLU(),
             nn.Flatten(),
         )
@@ -103,7 +100,6 @@ class ImpalaCNNSmall(nn.Module):
         return self.body(x)
 
 
-# TODO: fix initalization here
 class AtariBody(nn.Module):
     def __init__(self, obs_dim: Tuple[int, ...]):
         super().__init__()

@@ -9,13 +9,13 @@ from rlmeta.samplers import UniformSampler
 from rlmeta.storage import CircularBuffer
 
 from agents.core import Actor, Builder
-from agents.ppo.learning import PPOActor, PPOLearner
+from agents.ppo.learning import PPOActorRemote, PPOLearner
 from models import AtariPPOModel
 
 
 class PPOFactory(AgentFactory):
     def __init__(self, *args, **kwargs):
-        super().__init__(PPOActor, *args, **kwargs)
+        super().__init__(PPOActorRemote, *args, **kwargs)
 
     def __call__(self, index: int) -> Actor:
         return super().__call__(index)
@@ -36,7 +36,7 @@ class PPOBuilder(Builder):
         )
 
     def make_actor(self, model: ModelLike, rb: Optional[ReplayBufferLike] = None, deterministic: bool = False):
-        return PPOFactory(model, rb, deterministic)
+        return PPOFactory(model, rb, False)
 
     def make_learner(self, model: ModelLike, rb: ReplayBufferLike):
         optimizer = torch.optim.Adam(self._learner_model.parameters(), lr=self.cfg.agent.optimizer.lr,

@@ -1,7 +1,7 @@
 # @package _global_
 
 distributed:
-  infer_device: "cuda:1"
+  infer_device: "cuda:0"
   host: "mila"
 training:
   num_workers: 28

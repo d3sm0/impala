@@ -19,7 +19,7 @@ import models.models
 from agents.core import Actor, Learner
 
 
-class PPOActor(Actor):
+class PPOActorRemote(Actor):
     def __init__(self, model: models.models.AtariActorCritic,
                  replay_buffer: ReplayBufferLike,
                  deterministic_policy: bool = False,
@@ -34,11 +34,6 @@ class PPOActor(Actor):
         self._replay_buffer = replay_buffer
         self._trajectory = moolib.Batcher(rollout_length, dim=0, device="cpu")
         self._last_transition = None
-
-    def act(self, timestep: TimeStep) -> Action:
-        obs = timestep.observation
-        action, logpi, v = self._model.act(obs, self._deterministic_policy)
-        return Action(action, info={"logpi": logpi, "v": v})
 
     async def async_act(self, timestep: TimeStep) -> Action:
         obs = timestep.observation
@@ -132,8 +127,8 @@ class PPOLearner(Learner):
             start = time.perf_counter()
             self._model.push()
             update_time = (time.perf_counter() - start) * 1000
-        metrics["debug/replay_sample_per_second"] = (self._batch_size  * 20 / ((t1 - t0) * 1000))
-        metrics["debug/gradient_per_second"] = (self._batch_size * 20 / ((t2 - t1) * 1000))
+        metrics["debug/replay_sample_per_second"] = (self._batch_size / ((t1 - t0) * 1000))
+        metrics["debug/gradient_per_second"] = (self._batch_size / ((t2 - t1) * 1000))
         metrics["debug/total_time"] = (time.perf_counter() - t0) * 1000
         metrics["debug/forward_dt"] = (t2 - t1) * 1000
         metrics["debug/update_time"] = update_time
