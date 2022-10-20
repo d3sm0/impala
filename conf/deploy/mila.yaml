@@ -4,5 +4,5 @@ distributed:
   infer_device: "cpu"
   host: "mila"
 training:
-  num_workers: 28
-  num_rollouts: 56
+  num_workers: 12
+  num_rollouts: 24

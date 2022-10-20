@@ -43,7 +43,7 @@ class SACActorRemote(agents.core.Actor):
         obs = self._last_transition
         act, action_info = action
         next_obs, reward, done, _ = next_timestep
-        self._trajectory.stack((obs, act.unsqueeze(0), reward, next_obs, done))
+        self._trajectory.stack((obs, act, reward, next_obs, done))
         self._last_transition = next_obs
 
     async def async_update(self) -> None:
@@ -127,9 +127,11 @@ class SACLearner(agents.core.Learner):
             self._model.push()
             update_time = time.perf_counter() - start
         # TODO: in the distributed setting what is best? soft update or hard update?
-        if self._step_counter % 100 == 0:
-            self._critic.critic_target.load_state_dict(self._critic.critic.state_dict())
-        # rlego.polyak_update(self._critic.critic.parameters(), self._critic.critic_target.parameters(), self._tau)
+
+        # zip does not raise an exception if length of parameters does not match.
+        for param, target_param in zip(self._critic.parameters(), self._critic.critic_target.parameters()):
+            target_param.data.copy_(self._tau * param.data + (1 - self._tau) * target_param.data)
+
         self._step_counter += 1
 
         metrics["debug/replay_sample_per_second"] = (self._batch_size / ((t1 - t0) * 1000))

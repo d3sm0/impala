@@ -144,8 +144,8 @@ class Critic(nn.Module):
         super().__init__()
         self.q1 = SoftQNetwork(observation_space, action_space)
         self.q2 = SoftQNetwork(observation_space, action_space)
-        # self.q1 = D4PGCritic(observation_space, action_space)
-        # self.q2 = D4PGCritic(observation_space, action_space)
+        #self.q1 = D4PGCritic(observation_space, action_space)
+        #self.q2 = D4PGCritic(observation_space, action_space)
 
     def forward(self, s, a):
         return self.q1(s, a), self.q2(s, a)
@@ -188,7 +188,7 @@ class SoftActor(RemotableModel):
         with torch.no_grad():
             mu, log_std = self.forward(obs.to(device))
             std = log_std.exp()
-            x_t = mu + std * torch.randn_like(std) * eps.reshape_as(mu)
+            x_t = mu + std * torch.randn_like(std) * eps
             action = torch.tanh(x_t) * self.actor.action_scale + self.actor.action_bias
         return action.cpu()
 
