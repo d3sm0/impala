@@ -129,7 +129,7 @@ class SACLearner(agents.core.Learner):
         # TODO: in the distributed setting what is best? soft update or hard update?
 
         # zip does not raise an exception if length of parameters does not match.
-        for param, target_param in zip(self._critic.parameters(), self._critic.critic_target.parameters()):
+        for param, target_param in zip(self._critic.critic.parameters(), self._critic.critic_target.parameters()):
             target_param.data.copy_(self._tau * param.data + (1 - self._tau) * target_param.data)
 
         self._step_counter += 1
