@@ -1,4 +1,4 @@
-from typing import Tuple, Optional
+from typing import Tuple
 
 import numpy as np
 import torch
@@ -134,47 +134,54 @@ class LinearBody(nn.Module):
         return self.body(x)
 
 
-def layer_init_std(layer, scale=1.):
+def layer_fan_in(layer):
     if isinstance(layer, nn.Conv2d):
         fan_in, _ = torch.nn.init._calculate_fan_in_and_fan_out(layer.weight)
     else:
         fan_in = layer.weight.shape[1]
-    scale /= max(1, fan_in)
-    return scale
+    return max(1, fan_in)
 
 
 def layer_init_truncated(layer, scale=1.):
     with torch.no_grad():
-        std = layer_init_std(layer, scale=scale)
+        fan_in = layer_fan_in(layer)
         distribution_stddev = np.asarray(.87962566103423978, dtype=np.float32)
-        std = np.sqrt(std) / distribution_stddev
-        std = std / distribution_stddev
+        std = np.sqrt(scale / fan_in) / distribution_stddev
         torch.nn.init.trunc_normal_(layer.weight, std=std)
         torch.nn.init.constant_(layer.bias, 0.)
     return layer
 
 
-def layer_init_uniform(layer, scale: float = 1.):
+def layer_init_uniform(layer, scale: float = 0.33):
     with torch.no_grad():
-        scale = layer_init_std(layer, scale=scale)
-        scale = np.sqrt(3 * scale)
+        fan_in = layer_fan_in(layer)
+        scale = np.sqrt(3 / fan_in) * scale
         torch.nn.init.uniform_(layer.weight, -scale, scale)
         torch.nn.init.constant_(layer.bias, 0.)
     return layer
 
 
-def layer_init_ortho(layer, scale: Optional[float] = None, bias_const=0.0):
+def variance_scaling_uniform(layer, scale: float = 1.):
     with torch.no_grad():
-        scale = layer_init_std(layer, scale=scale)
-        torch.nn.init.orthogonal_(layer.weight, np.sqrt(scale))
+        fan_in = layer_fan_in(layer)
+        scale = np.sqrt(3 * scale / fan_in)
+        torch.nn.init.uniform_(layer.weight, -scale, scale)
+        torch.nn.init.constant_(layer.bias, 0.)
+    return layer
+
+
+def layer_init_ortho(layer, gain=2., bias_const=0.0):
+    # defaulted to relu
+    with torch.no_grad():
+        torch.nn.init.orthogonal_(layer.weight, gain=np.sqrt(gain))
         torch.nn.init.constant_(layer.bias, bias_const)
     return layer
 
 
-def layer_init_normed(layer, norm_dim: Tuple = (1,)):
+def layer_init_normed(layer, norm_dim: Tuple = (1, 2, 3), gain=1):
     with torch.no_grad():
-        scale = layer_init_std(layer)
+        gain = np.sqrt(gain)
         norm = layer.weight.norm(dim=norm_dim, p=2, keepdim=True)
-        layer.weight.data.mul_(scale / norm)
+        layer.weight.data.mul_(gain / norm)
         torch.nn.init.constant_(layer.bias, 0)
     return layer
