@@ -1,4 +1,3 @@
-import asyncio
 import time
 from typing import List, Dict, Optional
 
@@ -56,20 +55,20 @@ class SACActorRemote(agents.core.Actor):
     def _make_replay(self) -> List[NestedTensor]:
         s, a, r, s1, d = self._trajectory.get()
         # TODO: save the last transition there  is a bug where the mask is not applied propery
-        m = (torch.logical_not(d) * torch.ones_like(d)).roll(1, dims=(0,))
-        return nested_utils.unbatch_nested(lambda x: x.unsqueeze(1), (s, a, r, s1, d, m), self._rollout_length)
+        # m = (torch.logical_not(d) * torch.ones_like(d)).roll(1, dims=(0,))
+        return nested_utils.unbatch_nested(lambda x: x.unsqueeze(1), (s, a, r, s1, d), self._rollout_length)
 
     async def _async_make_replay(self) -> List[NestedTensor]:
         return self._make_replay()
 
     async def _async_send_replay(self, replay: List[NestedTensor]) -> None:
         await self._replay_buffer.async_extend(replay)
-        #n_sends = 5
-        #chunk_size, r = divmod(len(replay), n_sends)
-        #for i in range(n_sends):
+        # n_sends = 5
+        # chunk_size, r = divmod(len(replay), n_sends)
+        # for i in range(n_sends):
         #    await self._replay_buffer.async_extend(replay[i * chunk_size:(i + 1) * chunk_size])
         #    await asyncio.sleep(0.01)
-        #if r > 0:
+        # if r > 0:
         #    await self._replay_buffer.async_extend(replay[-r:])
 
 
@@ -180,7 +179,7 @@ class SACLearner(agents.core.Learner):
 
 
 def critic_loss(actor, critic, batch, gamma=0.99):
-    s, a, r, s1, d, m = batch
+    s, a, r, s1, d = batch
 
     with torch.no_grad():
         next_state_actions, next_state_log_pi = actor.policy(s1)
@@ -190,25 +189,25 @@ def critic_loss(actor, critic, batch, gamma=0.99):
         # next_q_value = rlego.discounted_returns(r, torch.logical_not(d) * gamma, min_qf_next_target)
     qf1, qf2 = critic(s, a)
 
-    qf1_loss = 0.5 * (next_q_value - qf1).pow(2).mul(m).mean()
-    qf2_loss = 0.5 * (next_q_value - qf2).pow(2).mul(m).mean()
+    qf1_loss = 0.5 * (next_q_value - qf1).pow(2).mean()
+    qf2_loss = 0.5 * (next_q_value - qf2).pow(2).mean()
     qf_loss = qf1_loss + qf2_loss
     return qf_loss, {"train/qf1_loss": qf1_loss, "train/qf2_loss": qf2_loss, "train/qf1": qf1.mean(),
                      "train/qf2": qf2.mean(), "train/qf_loss": qf_loss / 2.}
 
 
 def actor_loss(actor, critic, batch):
-    s, a, r, s1, d, m = batch
+    s, a, r, s1, d = batch
     pi, log_pi = actor.policy(s)
     qf1_pi, qf2_pi = critic(s, pi)
     min_qf_pi = torch.min(qf1_pi, qf2_pi)
-    actor_loss = (m * ((critic.alpha * log_pi) - min_qf_pi)).mean()
+    actor_loss = (((critic.alpha * log_pi) - min_qf_pi)).mean()
     return actor_loss, {"train/actor_loss": actor_loss}
 
 
 def alpha_loss(actor, critic, batch):
-    s, a, r, s1, d, m = batch
+    s, a, r, s1, d = batch
     with torch.no_grad():
         _, log_pi = actor.policy(s)
-    alpha_loss = - (m * critic.log_alpha * (log_pi + critic.target_entropy)).mean()
+    alpha_loss = - (critic.log_alpha * (log_pi + critic.target_entropy)).mean()
     return alpha_loss, {"train/alpha_loss": alpha_loss, "train/alpha": critic.alpha}
