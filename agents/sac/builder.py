@@ -1,11 +1,12 @@
 import copy
 from typing import Optional
 
+import rlmeta.core.replay_buffer
 import torch
 from rlmeta.agents.agent import AgentFactory
 from rlmeta.core.model import ModelLike
-from rlmeta.core.replay_buffer import ReplayBuffer, ReplayBufferLike
-from rlmeta.samplers import UniformSampler, PrioritizedSampler
+from rlmeta.core.replay_buffer import ReplayBufferLike
+from rlmeta.samplers import UniformSampler
 from rlmeta.storage import CircularBuffer
 
 from agents.core import Actor, Builder
@@ -30,14 +31,14 @@ class SACBuilder(Builder):
     def make_replay(self):
         sampler = UniformSampler()
         sampler.reset(self.cfg.training.seed)
-        return ReplayBuffer(
-            CircularBuffer(self.cfg.agent.replay_buffer_size, collate_fn=torch.cat),
+        return rlmeta.core.replay_buffer.ReplayBuffer(
+            CircularBuffer(self.cfg.agent.replay_buffer_size, collate_fn=torch.stack),
             sampler
         )
 
     def make_actor(self, model: ModelLike, rb: Optional[ReplayBufferLike] = None, deterministic: bool = False):
         exploration_noise = 0. if deterministic else self.cfg.agent.exploration_noise
-        return SACFactory(model, rb,  rollout_length=self.cfg.agent.rollout_length, exploration_noise=exploration_noise)
+        return SACFactory(model, rb, rollout_length=self.cfg.agent.rollout_length, exploration_noise=exploration_noise)
 
     def make_learner(self, model: ModelLike, rb: ReplayBufferLike):
         actor, critic = self._learner_model

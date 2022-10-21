@@ -27,8 +27,8 @@ distributed:
 
 
 evaluation:
-  num_workers: 2
-  num_rollouts: 4
+  num_workers: 4
+  num_rollouts: 8
   seed: 456
   deterministic_policy: true
   num_episodes: 4

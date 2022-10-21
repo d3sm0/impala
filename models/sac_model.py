@@ -26,7 +26,7 @@ def to_action(mean, log_std, action_scale=1.0, action_bias=0.):
     # Enforcing Action Bound
     log_prob -= torch.log(action_scale * (1 - y_t.pow(2)) + 1e-6)
     log_prob = log_prob.sum(-1)
-    return action, log_prob
+    return action, log_prob, std
 
 
 init_ = models.common.layer_init_uniform

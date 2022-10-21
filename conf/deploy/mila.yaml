@@ -5,11 +5,6 @@ distributed:
   host: "mila"
 training:
   num_workers: 8
-  num_rollouts: 16
+  num_rollouts: 24
+  steps_per_epoch: 1000
 
-evaluation:
-  num_workers: 2
-  num_rollouts: 4
-  seed: 456
-  deterministic_policy: true
-  num_episodes: 2

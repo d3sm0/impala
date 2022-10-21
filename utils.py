@@ -1,7 +1,9 @@
 import contextlib
 import random
 import time
-from typing import Optional
+from typing import Optional, Tuple
+
+from rlmeta.core import remote
 
 try:
     import aim
@@ -42,6 +44,12 @@ def set_seed(seed):
     torch.cuda.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
+
+
+class DebugBuffer(ReplayBuffer):
+    @remote.remote_method(None)
+    def debug_info(self) -> Tuple[int, int, int]:
+        return self._storage.capacity, self._storage.size, self._storage._impl.cursor
 
 
 class Run:
