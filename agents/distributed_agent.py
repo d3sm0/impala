@@ -30,7 +30,8 @@ class DistributedAgent(Agent):
             metrics = self._learner.train_step()
             self._stats_dict.extend(metrics)
             if local_steps % 100 == 0:
-                self._writer.run.log({k: v['mean'] for k, v in self._stats_dict.dict().items()})
+                self._writer.run.log({f"{k}_mean": v['mean'] for k, v in self._stats_dict.dict().items()})
+                self._writer.run.log({f"{k}_std": v['std'] for k, v in self._stats_dict.dict().items()})
         remote_metrics = self._controller.stats(Phase.TRAIN).dict()
         total_samples = remote_metrics["episode_length"]["mean"] * remote_metrics["episode_length"]["count"]
         delta_samples = (total_samples / (time.perf_counter() - self._start_time))

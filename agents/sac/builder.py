@@ -48,7 +48,10 @@ class SACBuilder(Builder):
         return SACLearner(model, critic=critic, replay_buffer=rb,
                           batch_size=self.cfg.agent.batch_size,
                           critic_optimizer=critic_optimizer,
-                          actor_optimizer=actor_optimizer)
+                          actor_optimizer=actor_optimizer,
+                          model_push_period=self.cfg.agent.push_period,
+                          learning_starts=self.cfg.agent.learning_starts,
+                          )
 
     def make_network(self, env_spec):
         critic = SoftCritic(env_spec.observation_space.shape, env_spec.action_space.shape).to(

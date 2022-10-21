@@ -1,3 +1,4 @@
+import asyncio
 import time
 from typing import List, Dict, Optional
 
@@ -54,6 +55,7 @@ class SACActorRemote(agents.core.Actor):
 
     def _make_replay(self) -> List[NestedTensor]:
         s, a, r, s1, d = self._trajectory.get()
+        # TODO: save the last transition there  is a bug where the mask is not applied propery
         m = (torch.logical_not(d) * torch.ones_like(d)).roll(1, dims=(0,))
         return nested_utils.unbatch_nested(lambda x: x.unsqueeze(1), (s, a, r, s1, d, m), self._rollout_length)
 
@@ -62,6 +64,13 @@ class SACActorRemote(agents.core.Actor):
 
     async def _async_send_replay(self, replay: List[NestedTensor]) -> None:
         await self._replay_buffer.async_extend(replay)
+        #n_sends = 5
+        #chunk_size, r = divmod(len(replay), n_sends)
+        #for i in range(n_sends):
+        #    await self._replay_buffer.async_extend(replay[i * chunk_size:(i + 1) * chunk_size])
+        #    await asyncio.sleep(0.01)
+        #if r > 0:
+        #    await self._replay_buffer.async_extend(replay[-r:])
 
 
 class SACLearner(agents.core.Learner):
@@ -129,6 +138,8 @@ class SACLearner(agents.core.Learner):
         # TODO: in the distributed setting what is best? soft update or hard update?
 
         # zip does not raise an exception if length of parameters does not match.
+        # if self._step_counter % 100 == 0:
+        #    self._critic.critic_target.load_state_dict(self._critic.critic.state_dict())
         for param, target_param in zip(self._critic.critic.parameters(), self._critic.critic_target.parameters()):
             target_param.data.copy_(self._tau * param.data + (1 - self._tau) * target_param.data)
 

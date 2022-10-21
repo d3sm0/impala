@@ -144,8 +144,8 @@ class Critic(nn.Module):
         super().__init__()
         self.q1 = SoftQNetwork(observation_space, action_space)
         self.q2 = SoftQNetwork(observation_space, action_space)
-        #self.q1 = D4PGCritic(observation_space, action_space)
-        #self.q2 = D4PGCritic(observation_space, action_space)
+        # self.q1 = D4PGCritic(observation_space, action_space)
+        # self.q2 = D4PGCritic(observation_space, action_space)
 
     def forward(self, s, a):
         return self.q1(s, a), self.q2(s, a)
@@ -181,10 +181,10 @@ class SoftActor(RemotableModel):
         return self.actor.forward(x)
 
     # This should probably match number of environments someohow
-    @remote.remote_method(batch_size=8)
+    @remote.remote_method(batch_size=128)
     def act(self, obs: torch.Tensor, eps: torch.Tensor = 0.) -> torch.Tensor:
         device = next(self.parameters()).device
-        eps.to(device)
+        eps = eps.to(device)
         with torch.no_grad():
             mu, log_std = self.forward(obs.to(device))
             std = log_std.exp()

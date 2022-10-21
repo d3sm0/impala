@@ -1,7 +1,7 @@
 # @package _global_
 
 distributed:
-  infer_device: "cpu"
+  infer_device: "cuda:0"
   host: ""
 training:
   num_workers: 8

@@ -1,8 +1,15 @@
 # @package _global_
 
 distributed:
-  infer_device: "cpu"
+  infer_device: "cuda:0"
   host: "mila"
 training:
-  num_workers: 12
-  num_rollouts: 24
+  num_workers: 8
+  num_rollouts: 16
+
+evaluation:
+  num_workers: 2
+  num_rollouts: 4
+  seed: 456
+  deterministic_policy: true
+  num_episodes: 2

@@ -8,6 +8,9 @@ import sys
 
 import experiment_buddy
 import hydra
+import moolib
+
+moolib.set_log_level("debug")
 import omegaconf
 import rlmeta.utils.hydra_utils as hydra_utils
 import torch
@@ -21,6 +24,10 @@ import utils
 import wandb
 from agents.distributed_agent import DistributedAgent
 from agents.sac.builder import SACBuilder
+
+logger = logging.getLogger(__name__)
+logger.addHandler(logging.StreamHandler())
+logger.setLevel(logging.DEBUG)
 
 
 # from agents.ppo.builder import PPOBuilder
@@ -98,4 +105,5 @@ def main(cfg):
 
 if __name__ == "__main__":
     mp.set_start_method("spawn")
+
     main()
