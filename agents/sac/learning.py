@@ -19,8 +19,6 @@ class SACActorRemote(agents.core.Actor):
                  gamma: float = 0.99,
                  rollout_length: int = 100,
                  ):
-        if exploration_noise > 0:
-            exploration_noise = torch.distributions.Uniform(0.5, 1.5).sample((1,)).float()
         self._model = model
         self._exploration_noise = torch.tensor([exploration_noise], dtype=torch.float32)
         self._gamma = gamma
@@ -165,8 +163,8 @@ class SACLearner(agents.core.Learner):
         # TODO: in the distributed setting what is best? soft update or hard update?
 
         # zip does not raise an exception if length of parameters does not match.
-        # if self._step_counter % 100 == 0:
-        #     self._critic.critic_target.load_state_dict(self._critic.critic.state_dict())
+        #3if self._step_counter % 100 == 0:
+        #3    self._critic.critic_target.load_state_dict(self._critic.critic.state_dict())
         for param, target_param in zip(self._critic.critic.parameters(), self._critic.critic_target.parameters()):
             target_param.data.copy_(self._tau * param.data + (1 - self._tau) * target_param.data)
 
