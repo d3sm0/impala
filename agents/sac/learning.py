@@ -1,3 +1,5 @@
+import asyncio
+import random
 import time
 from typing import List, Dict, Optional
 
@@ -17,8 +19,10 @@ class SACActorRemote(agents.core.Actor):
                  gamma: float = 0.99,
                  rollout_length: int = 100,
                  ):
+        if exploration_noise > 0:
+            exploration_noise = torch.distributions.Uniform(0.5, 1.5).sample((1,)).float()
         self._model = model
-        self._exploration_noise = torch.tensor([exploration_noise])
+        self._exploration_noise = torch.tensor([exploration_noise], dtype=torch.float32)
         self._gamma = gamma
         self._replay_buffer = replay_buffer
         self._rollout_length = rollout_length
@@ -34,7 +38,6 @@ class SACActorRemote(agents.core.Actor):
         if self._replay_buffer is None:
             return
         self._last_transition = timestep
-        # self._trajectory.clear()
 
     async def async_observe(self, action: Action,
                             next_timestep: TimeStep) -> None:
@@ -52,7 +55,6 @@ class SACActorRemote(agents.core.Actor):
             if self._last_transition.done:
                 replay = await self._async_make_replay()
                 await self._async_send_replay(replay)
-                self._trajectory.clear()
 
             # if len(self._trajectory) > self._rollout_length or self._trajectory[-1][-2]:
             #     replay = await self._async_make_replay()
@@ -87,7 +89,7 @@ class SACActorRemote(agents.core.Actor):
             batch.append(replay.pop())
             if len(batch) >= self._rollout_length:
                 await self._replay_buffer.async_extend(batch)
-                # TODO: maybe sleep
+                await asyncio.sleep(0.1 + random.random())
                 batch.clear()
         if batch:
             await self._replay_buffer.async_extend(batch)

@@ -25,7 +25,7 @@ from rlmeta.envs.env import EnvFactory
 
 from configs.config import Config
 
-TIMEOUT = 240
+TIMEOUT = 360
 
 
 @contextlib.contextmanager
