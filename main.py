@@ -4,11 +4,13 @@
 # LICENSE file in the root directory of this source tree.
 import logging
 import os
+import random
 import sys
 
 import experiment_buddy
 import hydra
 import moolib
+import numpy as np
 
 moolib.set_log_level("debug")
 import omegaconf
@@ -42,6 +44,8 @@ def main(cfg):
     torch.cuda.manual_seed_all(cfg.training.seed)
     torch.backends.cudnn.benchmark = True
     torch.backends.cudnn.deterministic = True
+    np.random.seed(cfg.training.seed)
+    random.seed(cfg.training.seed)
 
     # Meh
     if "SLURM_JOB_ID" in os.environ.keys() or cfg.distributed.host == "mila":

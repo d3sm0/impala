@@ -222,7 +222,7 @@ def critic_loss(actor, critic, batch, gamma=0.99):
     s, a, r, s1, d = batch
 
     with torch.no_grad():
-        next_state_actions, next_state_log_pi = actor.policy(s1)
+        next_state_actions, next_state_log_pi, _ = actor.policy(s1)
         qf1_next_target, qf2_next_target = critic.critic_target(s1, next_state_actions)
         min_qf_next_target = torch.min(qf1_next_target, qf2_next_target) - critic.alpha * next_state_log_pi
         next_q_value = r + d.logical_not() * gamma * min_qf_next_target
@@ -242,12 +242,12 @@ def actor_loss(actor, critic, batch):
     qf1_pi, qf2_pi = critic(s, pi)
     min_qf_pi = torch.min(qf1_pi, qf2_pi)
     actor_loss = ((critic.alpha * log_pi) - min_qf_pi).mean()
-    return actor_loss, {"train/actor_loss": actor_loss, "train/actor_std": std}
+    return actor_loss, {"train/actor_loss": actor_loss, "train/actor_std": std.sum(dim=-1).mean()}
 
 
 def alpha_loss(actor, critic, batch):
     s, a, r, s1, d = batch
     with torch.no_grad():
-        _, log_pi = actor.policy(s)
+        _, log_pi, _ = actor.policy(s)
     alpha_loss = - (critic.log_alpha * (log_pi + critic.target_entropy)).mean()
     return alpha_loss, {"train/alpha_loss": alpha_loss, "train/alpha": critic.alpha}
