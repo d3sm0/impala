@@ -1,8 +1,7 @@
-import asyncio
-import random
 import time
 from typing import List, Dict, Optional
 
+import moolib
 import torch
 from rlmeta.core.model import ModelLike
 from rlmeta.core.replay_buffer import ReplayBufferLike
@@ -24,7 +23,7 @@ class SACActorRemote(agents.core.Actor):
         self._gamma = gamma
         self._replay_buffer = replay_buffer
         self._rollout_length = rollout_length
-        self._trajectory = []
+        self._trajectory = moolib.Batcher(self._rollout_length, device='cpu', dim=0)
         self._last_transition = None
 
     async def async_act(self, timestep: TimeStep) -> Action:
@@ -44,32 +43,38 @@ class SACActorRemote(agents.core.Actor):
         obs = self._last_transition.observation
         act, action_info = action
         next_obs, reward, done, _ = next_timestep
-        self._trajectory.append((obs, act, reward, next_obs, done))
-        # self._trajectory.stack((obs, act, reward, next_obs, done))
+        # self._trajectory.append((obs, act, reward, next_obs, done))
+        self._trajectory.stack((obs, act, reward, next_obs, done))
         self._last_transition = next_timestep
 
     async def async_update(self) -> None:
         if self._replay_buffer is not None:
-            if self._last_transition.done:
+            if not self._trajectory.empty():
                 replay = await self._async_make_replay()
                 await self._async_send_replay(replay)
 
+            # if self._last_transition.done:
+            #    replay = await self._async_make_replay()
+            #    await self._async_send_replay(replay)
+
             # if len(self._trajectory) > self._rollout_length or self._trajectory[-1][-2]:
-            #     replay = await self._async_make_replay()
-            #     await self._async_send_replay(replay)
             #     self._trajectory.clear()
 
     def _make_replay(self) -> List[NestedTensor]:
-        return self._trajectory
         # return self._trajectory
+        # return self._trajectory
+        s, a, r, s1, d = self._trajectory.get()
         # s, a, r, s1, d = self._trajectory
         # s, a, r, s1, d = nested_utils.collate_nested(torch.stack, self._trajectory)
         # TODO: save the last transition there  is a bug where the mask is not applied propery
         # m = (torch.logical_not(d) * torch.ones_like(d)).roll(1, dims=(0,))
-        # return list(nested_utils.unbatch_nested(lambda x: x.unsqueeze(1), (s, a, r, s1, d), self._rollout_length))
+        return list(nested_utils.unbatch_nested(lambda x: x.unsqueeze(1), (s, a, r, s1, d), self._rollout_length))
 
     async def _async_make_replay(self) -> List[NestedTensor]:
         return self._make_replay()
+
+    async def _async_send_replay(self, replay: List[NestedTensor]) -> None:
+        await self._replay_buffer.async_extend(replay)
 
     # async def _async_send_replay(self, replay: List[NestedTensor]) -> None:
     #    # await self._replay_buffer.async_extend(replay)
@@ -81,17 +86,17 @@ class SACActorRemote(agents.core.Actor):
     #    if r > 0:
     #        await self._replay_buffer.async_extend(replay[-r:])
 
-    async def _async_send_replay(self, replay: List[NestedTensor]) -> None:
-        batch = []
-        while replay:
-            batch.append(replay.pop())
-            if len(batch) >= self._rollout_length:
-                await self._replay_buffer.async_extend(batch)
-                await asyncio.sleep(0.1 + random.random())
-                batch.clear()
-        if batch:
-            await self._replay_buffer.async_extend(batch)
-            batch.clear()
+    # async def _async_send_replay(self, replay: List[NestedTensor]) -> None:
+    #    batch = []
+    #    while replay:
+    #        batch.append(replay.pop())
+    #        if len(batch) >= self._rollout_length:
+    #            await self._replay_buffer.async_extend(batch)
+    #            await asyncio.sleep(0.1 + random.random())
+    #            batch.clear()
+    #    if batch:
+    #        await self._replay_buffer.async_extend(batch)
+    #        batch.clear()
 
 
 class SACLearner(agents.core.Learner):
@@ -152,8 +157,8 @@ class SACLearner(agents.core.Learner):
         if self._step_counter % self._policy_update_period == 0:
             for _ in range(self._policy_update_period):
                 actor_metrics = self._train_actor(batch)
-                alpha_metrics = self._train_alpha(batch)
-                metrics.update({**actor_metrics, **alpha_metrics})
+                # alpha_metrics = self._train_alpha(batch)
+                metrics.update({**actor_metrics})  # , **alpha_metrics})
         t2 = time.perf_counter()
         update_time = 0
         if self._step_counter % self._model_push_period == 0:
@@ -163,10 +168,11 @@ class SACLearner(agents.core.Learner):
         # TODO: in the distributed setting what is best? soft update or hard update?
 
         # zip does not raise an exception if length of parameters does not match.
-        #3if self._step_counter % 100 == 0:
-        #3    self._critic.critic_target.load_state_dict(self._critic.critic.state_dict())
+        # 3if self._step_counter % 100 == 0:
+        # 3    self._critic.critic_target.load_state_dict(self._critic.critic.state_dict())
         for param, target_param in zip(self._critic.critic.parameters(), self._critic.critic_target.parameters()):
-            target_param.data.copy_(self._tau * param.data + (1 - self._tau) * target_param.data)
+            target_param.mul_(1 - self._tau)
+            target_param.add_(self._tau * param)
 
         self._step_counter += 1
 
@@ -229,8 +235,8 @@ def critic_loss(actor, critic, batch, gamma=0.99):
         # next_q_value = rlego.discounted_returns(r, torch.logical_not(d) * gamma, min_qf_next_target)
     qf1, qf2 = critic(s, a)
 
-    qf1_loss = 0.5 * (next_q_value - qf1).pow(2).mean()
-    qf2_loss = 0.5 * (next_q_value - qf2).pow(2).mean()
+    qf1_loss = (next_q_value - qf1).pow(2).mean()
+    qf2_loss = (next_q_value - qf2).pow(2).mean()
     qf_loss = qf1_loss + qf2_loss
     return qf_loss, {"train/qf1_loss": qf1_loss, "train/qf2_loss": qf2_loss, "train/qf1": qf1.mean(),
                      "train/qf2": qf2.mean(), "train/qf_loss": qf_loss / 2.}

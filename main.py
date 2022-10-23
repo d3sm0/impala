@@ -6,6 +6,7 @@ import logging
 import os
 import random
 import sys
+import time
 
 import experiment_buddy
 import hydra
@@ -27,7 +28,7 @@ import wandb
 from agents.distributed_agent import DistributedAgent
 from agents.sac.builder import SACBuilder
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("root")
 logger.addHandler(logging.StreamHandler())
 logger.setLevel(logging.DEBUG)
 
@@ -38,7 +39,7 @@ logger.setLevel(logging.DEBUG)
 
 @hydra.main(version_base=None, config_path="./conf", config_name="config")
 def main(cfg):
-    logging.info(hydra_utils.config_to_json(cfg))
+    logger.info(hydra_utils.config_to_json(cfg))
 
     torch.manual_seed(cfg.training.seed)
     torch.cuda.manual_seed_all(cfg.training.seed)
@@ -99,7 +100,17 @@ def main(cfg):
     loops.start()
     agent.connect()
     for epoch in range(cfg.training.num_epochs):
-        total_samples = agent.train(cfg.training.steps_per_epoch)
+        total_samples = None
+        for t in range(7):
+            try:
+                total_samples = agent.train(cfg.training.steps_per_epoch)
+                break
+            except RuntimeError as e:
+                print(f"RuntimeError. Sleeping for {2 ** t}", e)
+                time.sleep(2 ** t)
+        if total_samples is None:
+            print("Failed to train")
+            break
         agent.eval(cfg.evaluation.num_rollouts, keep_training_loops=False)
         if total_samples > cfg.task.total_frames:
             break
@@ -109,5 +120,4 @@ def main(cfg):
 
 if __name__ == "__main__":
     mp.set_start_method("spawn")
-
     main()

@@ -32,7 +32,7 @@ class SACBuilder(Builder):
         sampler = UniformSampler()
         sampler.reset(self.cfg.training.seed)
         return rlmeta.core.replay_buffer.ReplayBuffer(
-            CircularBuffer(self.cfg.agent.replay_buffer_size, collate_fn=torch.stack),
+            CircularBuffer(self.cfg.agent.replay_buffer_size, collate_fn=torch.cat),
             sampler
         )
 

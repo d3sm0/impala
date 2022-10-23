@@ -1,5 +1,6 @@
 import copy
 import functools
+import math
 from typing import Tuple
 
 import numpy as np
@@ -152,12 +153,13 @@ class Critic(nn.Module):
 
 
 class SoftCritic(nn.Module):
-    def __init__(self, observation_space, action_space, alpha=0.):
+    def __init__(self, observation_space, action_space, alpha=0.2):
         super().__init__()
         self.critic = Critic(observation_space, action_space)
         self.critic_target = copy.deepcopy(self.critic)
-        self.register_parameter("log_alpha", nn.Parameter(torch.tensor(alpha, dtype=torch.float32)))
-        self.register_buffer("target_entropy", torch.tensor(-np.prod(action_space), dtype=torch.float32))
+        self.register_parameter("log_alpha", nn.Parameter(torch.tensor(math.log(alpha), dtype=torch.float32)))
+        self.register_buffer("target_entropy", nn.Parameter(torch.tensor(-np.prod(action_space), dtype=torch.float32),
+                                                            requires_grad=False))
         for param in self.critic_target.parameters():
             param.requires_grad = False
 
