@@ -34,18 +34,18 @@ class SACActorRemote(agents.core.Actor):
     async def async_observe_init(self, timestep: TimeStep) -> None:
         if self._replay_buffer is None:
             return
-        self._last_transition = timestep
+        self._last_transition = timestep.observation
 
     async def async_observe(self, action: Action,
                             next_timestep: TimeStep) -> None:
         if self._replay_buffer is None:
             return
-        obs = self._last_transition.observation
+        obs = self._last_transition
         act, action_info = action
         next_obs, reward, done, _ = next_timestep
         # self._trajectory.append((obs, act, reward, next_obs, done))
         self._trajectory.stack((obs, act, reward, next_obs, done))
-        self._last_transition = next_timestep
+        self._last_transition = next_obs.clone()
 
     async def async_update(self) -> None:
         if self._replay_buffer is not None:
@@ -143,9 +143,6 @@ class SACLearner(agents.core.Learner):
     def prepare(self):
         if self.can_train is False:
             self._replay_buffer.warm_up(self._learning_starts)
-            # capacity, size, cursor = self._replay_buffer.debug_info()
-            # self._rb_cursor = cursor
-            # self._rb_rounds = 0
         self.can_train = True
 
     def train_step(self):
@@ -165,29 +162,15 @@ class SACLearner(agents.core.Learner):
             start = time.perf_counter()
             self._model.push()
             update_time = time.perf_counter() - start
-        # TODO: in the distributed setting what is best? soft update or hard update?
 
-        # zip does not raise an exception if length of parameters does not match.
-        # 3if self._step_counter % 100 == 0:
-        # 3    self._critic.critic_target.load_state_dict(self._critic.critic.state_dict())
+        capacity, size = self._replay_buffer.info()
+        metrics["debug/rb_capacity"] = capacity
+        # self._critic.critic_target.load_state_dict(self._critic.critic.state_dict())
         for param, target_param in zip(self._critic.critic.parameters(), self._critic.critic_target.parameters()):
             target_param.mul_(1 - self._tau)
             target_param.add_(self._tau * param)
 
         self._step_counter += 1
-
-        # capacity, size, last_cursor = self._replay_buffer.debug_info()
-        # metrics["debug/rb/capacity"] = capacity
-        # has_turned = (last_cursor - self._rb_cursor) < 0
-        # self._rb_rounds += has_turned
-        # metrics["debug/rb/total_samples"] = self._rb_rounds + last_cursor / capacity
-        # if has_turned:
-        #     delta_samples = (last_cursor + (capacity - self._rb_cursor))
-        # else:
-        #     delta_samples = (last_cursor - self._rb_cursor)
-        # delta_samples = delta_samples / capacity
-        # metrics["debug/rb/insertion_rate"] = delta_samples
-        # self._rb_cursor = last_cursor
 
         metrics["debug/replay_sample_per_second"] = (self._batch_size / ((t1 - t0) * 1000))
         metrics["debug/gradient_per_second"] = (self._batch_size / ((t2 - t1) * 1000))
@@ -199,28 +182,28 @@ class SACLearner(agents.core.Learner):
 
     def _train_critic(self, batch: NestedTensor) -> Dict[str, float]:
         loss, metrics = critic_loss(self._model, self._critic, batch)
-        self._critic_optimizer.zero_grad()
         loss.backward()
 
         total_norm = torch.nn.utils.clip_grad_norm_(self._critic.parameters(), self._max_grad_norm)
         metrics["train/critic_grad_norm"] = total_norm
         self._critic_optimizer.step()
+        self._critic_optimizer.zero_grad(set_to_none=True)
         return metrics
 
     def _train_actor(self, batch: NestedTensor) -> Dict[str, float]:
         loss, metrics = actor_loss(self._model, self._critic, batch)
-        self._actor_optimizer.zero_grad()
         loss.backward()
         total_norm = torch.nn.utils.clip_grad_norm_(self._model.parameters(), self._max_grad_norm)
         metrics["train/actor_grad_norm"] = total_norm
         self._actor_optimizer.step()
+        self._actor_optimizer.zero_grad(set_to_none=True)
         return metrics
 
     def _train_alpha(self, batch: NestedTensor) -> Dict[str, float]:
         loss, metrics = alpha_loss(self._model, self._critic, batch)
-        self._critic_optimizer.zero_grad()
         loss.backward()
         self._critic_optimizer.step()
+        self._critic_optimizer.zero_grad(set_to_none=True)
         return metrics
 
 

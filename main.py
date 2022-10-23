@@ -6,7 +6,6 @@ import logging
 import os
 import random
 import sys
-import time
 
 import experiment_buddy
 import hydra
@@ -58,6 +57,7 @@ def main(cfg):
                                      disabled=sys.gettrace() is not None,
                                      wandb_kwargs={"project": "impala",
                                                    "settings": wandb.Settings(start_method="thread"),
+                                                   # "mode": "disabled",
                                                    "config": omegaconf.OmegaConf.to_container(
                                                        cfg, resolve=True),
                                                    # "tags": [cfg.distributed.host,
@@ -86,8 +86,7 @@ def main(cfg):
 
     e_agent_fac = builder.make_actor(e_model, deterministic=True)
     evaluate_loop = utils.create_evaluation_loops(cfg, envs.EnvFactory(cfg.task.env_id, library_str=cfg.task.benchmark,
-                                                                       train=False), e_agent_fac,
-                                                  e_ctrl)
+                                                                       train=False), e_agent_fac, e_ctrl)
 
     loops = LoopList([train_loop, evaluate_loop])
 
@@ -100,17 +99,7 @@ def main(cfg):
     loops.start()
     agent.connect()
     for epoch in range(cfg.training.num_epochs):
-        total_samples = None
-        for t in range(7):
-            try:
-                total_samples = agent.train(cfg.training.steps_per_epoch)
-                break
-            except RuntimeError as e:
-                print(f"RuntimeError. Sleeping for {2 ** t}", e)
-                time.sleep(2 ** t)
-        if total_samples is None:
-            print("Failed to train")
-            break
+        total_samples = agent.train(cfg.training.steps_per_epoch)
         agent.eval(cfg.evaluation.num_rollouts, keep_training_loops=False)
         if total_samples > cfg.task.total_frames:
             break

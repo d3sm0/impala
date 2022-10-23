@@ -42,10 +42,11 @@ class SACBuilder(Builder):
 
     def make_learner(self, model: ModelLike, rb: ReplayBufferLike):
         actor, critic = self._learner_model
-        critic_optimizer = torch.optim.Adam(critic.parameters(), lr=self.cfg.agent.optimizer.critic_lr,
+        critic_optimizer = torch.optim.Adam(critic.critic.parameters(), lr=self.cfg.agent.optimizer.critic_lr,
                                             eps=self.cfg.agent.optimizer.eps)
         actor_optimizer = torch.optim.Adam(actor.parameters(), lr=self.cfg.agent.optimizer.actor_lr,
                                            eps=self.cfg.agent.optimizer.eps)
+
         return SACLearner(model, critic=critic, replay_buffer=rb,
                           batch_size=self.cfg.agent.batch_size,
                           critic_optimizer=critic_optimizer,
