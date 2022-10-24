@@ -3,6 +3,7 @@ import time
 from typing import List, Dict, Optional
 
 import moolib
+import rlego
 import torch
 from rlmeta.core.model import ModelLike
 from rlmeta.core.replay_buffer import ReplayBufferLike
@@ -72,7 +73,7 @@ class SACActorRemote(agents.core.Actor):
         # s, a, r, s1, d = nested_utils.collate_nested(torch.stack, self._trajectory)
         # TODO: save the last transition there  is a bug where the mask is not applied propery
         # m = (torch.logical_not(d) * torch.ones_like(d)).roll(1, dims=(0,))
-        return list(nested_utils.unbatch_nested(lambda x: x.unsqueeze(1), (s, a, r, s1, d), self._rollout_length))
+        return [nested_utils.map_nested(lambda x: x.unsqueeze(0), (s, a, r, s1, d))]
 
     async def _async_make_replay(self) -> List[NestedTensor]:
         return self._make_replay()
@@ -244,8 +245,8 @@ def critic_loss(actor, critic, batch, gamma=0.99):
         next_state_actions, next_state_log_pi, _ = actor.policy(s1)
         qf1_next_target, qf2_next_target = critic.target_critic(s1, next_state_actions)
         min_qf_next_target = torch.min(qf1_next_target, qf2_next_target) - critic.alpha * next_state_log_pi
-        next_q_value = r + d.logical_not() * gamma * min_qf_next_target
-        # next_q_value = rlego.discounted_returns(r, torch.logical_not(d) * gamma, min_qf_next_target)
+        #next_q_value = r + d.logical_not() * gamma * min_qf_next_target
+        next_q_value = rlego.discounted_returns(r, torch.logical_not(d) * gamma, min_qf_next_target)
     qf1, qf2 = critic(s, a)
 
     qf1_loss = (next_q_value - qf1).pow(2).mean()
