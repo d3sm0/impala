@@ -108,7 +108,7 @@ def main(cfg):
             )
             writer.run.config.update({
                 "latest": f"model-{epoch}.pt"
-            })
+            }, allow_val_change=True)
         if total_samples > cfg.task.total_frames:
             break
     loops.terminate()
