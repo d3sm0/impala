@@ -134,6 +134,8 @@ class SACLearner(agents.core.Learner):
         self._step_counter = 0
         self._device = None
         self._rb_cursor = None
+        # the critic is local citizen hence share memory
+        # self._critic.share_memory()
 
     def device(self) -> torch.device:
         if self._device is None:
@@ -150,12 +152,14 @@ class SACLearner(agents.core.Learner):
         _, batch, _ = self._replay_buffer.sample(self._batch_size)
         batch = nested_utils.map_nested(lambda x: x.to(self.device()).squeeze(dim=-1), batch)
         t1 = time.perf_counter()
+        # metrics ={}
+        # time.sleep(0.02)
         metrics = self._train_critic(batch)
-        if self._step_counter % self._policy_update_period == 0:
-            for _ in range(self._policy_update_period):
-                actor_metrics = self._train_actor(batch)
-                # alpha_metrics = self._train_alpha(batch)
-                metrics.update({**actor_metrics})  # , **alpha_metrics})
+        metrics = self._train_actor(batch)
+        # if self._step_counter % self._policy_update_period == 0:
+        #    for _ in range(self._policy_update_period):
+        #        # alpha_metrics = self._train_alpha(batch)
+        #        metrics.update({**actor_metrics})  # , **alpha_metrics})
         t2 = time.perf_counter()
         update_time = 0
         if self._step_counter % self._model_push_period == 0:
@@ -165,10 +169,13 @@ class SACLearner(agents.core.Learner):
 
         capacity, size = self._replay_buffer.info()
         metrics["debug/rb_capacity"] = capacity
-        # self._critic.critic_target.load_state_dict(self._critic.critic.state_dict())
-        for param, target_param in zip(self._critic.critic.parameters(), self._critic.critic_target.parameters()):
-            target_param.mul_(1 - self._tau)
-            target_param.add_(self._tau * param)
+        # if self._step_counter % 100 == 0:
+        #    self._critic.critic_target.load_state_dict(self._critic.critic.state_dict())
+        with torch.no_grad():
+            for param, target_param in zip(self._critic.q1.parameters(), self._critic.q1_target.parameters()):
+                target_param.data.copy_(self._tau * param.data + (1 - self._tau) * target_param.data)
+            for param, target_param in zip(self._critic.q2.parameters(), self._critic.q2_target.parameters()):
+                target_param.data.copy_(self._tau * param.data + (1 - self._tau) * target_param.data)
 
         self._step_counter += 1
 
@@ -182,21 +189,20 @@ class SACLearner(agents.core.Learner):
 
     def _train_critic(self, batch: NestedTensor) -> Dict[str, float]:
         loss, metrics = critic_loss(self._model, self._critic, batch)
+        self._critic_optimizer.zero_grad()
         loss.backward()
-
         total_norm = torch.nn.utils.clip_grad_norm_(self._critic.parameters(), self._max_grad_norm)
         metrics["train/critic_grad_norm"] = total_norm
         self._critic_optimizer.step()
-        self._critic_optimizer.zero_grad(set_to_none=True)
         return metrics
 
     def _train_actor(self, batch: NestedTensor) -> Dict[str, float]:
         loss, metrics = actor_loss(self._model, self._critic, batch)
+        self._actor_optimizer.zero_grad(set_to_none=True)
         loss.backward()
         total_norm = torch.nn.utils.clip_grad_norm_(self._model.parameters(), self._max_grad_norm)
         metrics["train/actor_grad_norm"] = total_norm
         self._actor_optimizer.step()
-        self._actor_optimizer.zero_grad(set_to_none=True)
         return metrics
 
     def _train_alpha(self, batch: NestedTensor) -> Dict[str, float]:
@@ -212,11 +218,12 @@ def critic_loss(actor, critic, batch, gamma=0.99):
 
     with torch.no_grad():
         next_state_actions, next_state_log_pi, _ = actor.policy(s1)
-        qf1_next_target, qf2_next_target = critic.critic_target(s1, next_state_actions)
+        qf1_next_target, qf2_next_target = critic.q1_target(s1, next_state_actions), critic.q2_target(s1, next_state_actions)
         min_qf_next_target = torch.min(qf1_next_target, qf2_next_target) - critic.alpha * next_state_log_pi
         next_q_value = r + d.logical_not() * gamma * min_qf_next_target
         # next_q_value = rlego.discounted_returns(r, torch.logical_not(d) * gamma, min_qf_next_target)
-    qf1, qf2 = critic(s, a)
+    qf1 = critic.q1(s, a)
+    qf2 = critic.q2(s, a)
 
     qf1_loss = (next_q_value - qf1).pow(2).mean()
     qf2_loss = (next_q_value - qf2).pow(2).mean()

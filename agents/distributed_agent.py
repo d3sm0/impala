@@ -28,7 +28,7 @@ class DistributedAgent(Agent):
         self._learner.prepare()
         for local_steps in rich.progress.track(range(num_steps), description="Training"):
             metrics = self._learner.train_step()
-            self._stats_dict.extend(metrics)
+            # self._stats_dict.extend(metrics)
             if local_steps % 100 == 0:
                 # self._writer.run.log({f"{k}_mean": v['mean'] for k, v in self._stats_dict.dict().items() if "debug" in k})
                 self._writer.run.log(metrics)

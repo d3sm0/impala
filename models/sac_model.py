@@ -154,21 +154,24 @@ class Critic(nn.Module):
 class SoftCritic(nn.Module):
     def __init__(self, observation_space, action_space, alpha=0.2):
         super().__init__()
-        self.critic = Critic(observation_space, action_space)
-        self.critic_target = Critic(observation_space, action_space)
-        self.critic_target.load_state_dict(self.critic.state_dict())
+        self.q1 = SoftQNetwork(observation_space, action_space)
+        self.q2 = SoftQNetwork(observation_space, action_space)
+        self.q1_target = SoftQNetwork(observation_space, action_space)
+        self.q2_target = SoftQNetwork(observation_space, action_space)
+        self.q1_target.load_state_dict(self.q1.state_dict())
+        self.q2_target.load_state_dict(self.q2.state_dict())
 
         self.register_parameter("log_alpha",
                                 nn.Parameter(torch.tensor(math.log(alpha), dtype=torch.float32), requires_grad=False))
         self.register_buffer("target_entropy", nn.Parameter(torch.tensor(-np.prod(action_space), dtype=torch.float32),
                                                             requires_grad=False))
-        #for param in self.critic_target.parameters():
-        #    param.requires_grad = False
+        # for param in self.critic_target.parameters():
+        #    param.requires_grad= False
 
-        self.share_memory()
+        # self.share_memory()
 
     def forward(self, s, a):
-        return self.critic(s, a)
+        return self.q1(s, a), self.q2(s, a)
 
     @property
     def alpha(self):

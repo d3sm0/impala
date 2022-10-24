@@ -78,7 +78,7 @@ def main(cfg):
 
     ctrl = Controller()
     servers = utils.create_servers(cfg, ctrl, builder.actor_model, rb)
-    t_ctrl, t_model, t_rb = utils.create_workers(cfg, ctrl, builder.actor_model, rb)
+    t_ctrl, t_model, t_rb = utils.create_workers(cfg, ctrl, builder._actor_model, rb)
 
     t_agent_fac = builder.make_actor(t_model, t_rb, deterministic=False)
     train_loop = utils.create_train_loop(cfg, env_factory, t_agent_fac, t_ctrl)

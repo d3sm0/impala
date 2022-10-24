@@ -1,4 +1,3 @@
-import copy
 from typing import Optional
 
 import rlmeta.core.replay_buffer
@@ -42,8 +41,13 @@ class SACBuilder(Builder):
 
     def make_learner(self, model: ModelLike, rb: ReplayBufferLike):
         actor, critic = self._learner_model
-        critic_optimizer = torch.optim.Adam(critic.critic.parameters(), lr=self.cfg.agent.optimizer.critic_lr,
-                                            eps=self.cfg.agent.optimizer.eps)
+        critic_optimizer = torch.optim.Adam([{
+            'params': critic.q1.parameters(),
+        }, {
+            'params': critic.q2.parameters(),
+        }
+        ], lr=self.cfg.agent.optimizer.critic_lr,
+            eps=self.cfg.agent.optimizer.eps)
         actor_optimizer = torch.optim.Adam(actor.parameters(), lr=self.cfg.agent.optimizer.actor_lr,
                                            eps=self.cfg.agent.optimizer.eps)
 
@@ -61,8 +65,8 @@ class SACBuilder(Builder):
         actor = SoftActor(env_spec.observation_space.shape, env_spec.action_space.shape).to(
             self.cfg.distributed.train_device)
         self._learner_model = (actor, critic)
-        inference_model = copy.deepcopy(actor).to(self.cfg.distributed.infer_device)
-        for param in inference_model.parameters():
-            param.requires_grad = False
+        inference_model = SoftActor(env_spec.observation_space.shape, env_spec.action_space.shape).to(
+            self.cfg.distributed.infer_device)
+        inference_model.load_state_dict(actor.state_dict())
         self._actor_model = inference_model
         return actor
