@@ -1,15 +1,15 @@
 replay_buffer_size: 1000000
 update_epochs: 2
-push_period: 5
-rollout_length: 100 # todo: this parameter should be called differently and depends by the data size being sent
+push_period: 1000
+rollout_length: 5 # todo: this parameter should be called differently and depends by the data size being sent
 target_network_frequency: 1
 exploration_noise: 1.0 # todo: randomize across actors
-batch_size: 256
+batch_size: 50
 tau: 0.005
 max_grad_norm: 40
 alpha: 1.
 tune_alpha: true
-learning_starts: 5000
+learning_starts: 500
 optimizer:
   eps: 1e-5
   actor_lr: 0.0003
