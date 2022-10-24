@@ -82,7 +82,7 @@ def main(cfg):
 
     t_agent_fac = builder.make_actor(t_model, t_rb, deterministic=False)
     train_loop = utils.create_train_loop(cfg, env_factory, t_agent_fac, t_ctrl)
-    e_ctrl, e_model, _ = utils.create_workers(cfg, ctrl, builder.actor_model)
+    e_ctrl, e_model, _ = utils.create_workers(cfg, ctrl, builder._actor_model)
 
     e_agent_fac = builder.make_actor(e_model, deterministic=True)
     evaluate_loop = utils.create_evaluation_loops(cfg, envs.EnvFactory(cfg.task.env_id, library_str=cfg.task.benchmark,
