@@ -16,7 +16,7 @@ distributed:
   m_server_addr: ${distributed.server_addr}:4411
 
   r_server_name: "r_server"
-  r_server_addr: ${distributed.server_addr}:4412"
+  r_server_addr: ${distributed.server_addr}:4412
 
   c_server_name: "c_server"
   c_server_addr: ${distributed.server_addr}:4413
