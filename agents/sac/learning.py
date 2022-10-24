@@ -153,11 +153,12 @@ class SACLearner(agents.core.Learner):
         batch = nested_utils.map_nested(lambda x: x.to(self.device()).squeeze(dim=-1), batch)
         t1 = time.perf_counter()
         metrics = self._train_critic(batch)
-        if self._step_counter % self._policy_update_period == 0:
-            for _ in range(self._policy_update_period):
-                actor_metrics = self._train_actor(batch)
-                # alpha_metrics = self._train_alpha(batch)
-                metrics.update({**actor_metrics})  # , **alpha_metrics})
+        actor_metrics = self._train_actor(batch)
+        metrics.update(actor_metrics)
+        # if self._step_counter % self._policy_update_period == 0:
+        #    for _ in range(self._policy_update_period):
+        #        # alpha_metrics = self._train_alpha(batch)
+        #        metrics.update({**actor_metrics})  # , **alpha_metrics})
         t2 = time.perf_counter()
         update_time = 0
         if self._step_counter % self._model_push_period == 0:
@@ -168,10 +169,15 @@ class SACLearner(agents.core.Learner):
         capacity, size = self._replay_buffer.info()
         metrics["debug/rb_capacity"] = capacity
         # if self._step_counter % 100 == 0:
-        #    self._critic.critic_target.load_state_dict(self._critic.critic.state_dict())
+        #     with torch.no_grad():
+        #         self._critic.target_critic.load_state_dict(self._critic.critic.state_dict())
+        #         self._target_actor.load_state_dict(self._model.state_dict())
         with torch.no_grad():
             for param, target_param in zip(self._critic.critic.parameters(), self._critic.target_critic.parameters()):
                 target_param.data.copy_(self._tau * param.data + (1 - self._tau) * target_param.data)
+
+        #    for param, target_param in zip(self._target_actor.parameters(), self._model.actor.parameters()):
+        #        target_param.data.copy_(self._tau * param.data + (1 - self._tau) * target_param.data)
 
         self._step_counter += 1
 

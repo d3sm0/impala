@@ -27,11 +27,11 @@ distributed:
 
 
 evaluation:
-  num_workers: 4
-  num_rollouts: 8
+  num_workers: 2
+  num_rollouts: 4
   seed: 456
   deterministic_policy: true
-  num_episodes: 4
+  num_episodes: 2
 
 training:
   num_workers: 4
