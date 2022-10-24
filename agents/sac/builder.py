@@ -54,6 +54,7 @@ class SACBuilder(agents.core.Builder):
                           actor_optimizer=actor_optimizer,
                           model_push_period=self.cfg.agent.push_period,
                           learning_starts=self.cfg.agent.learning_starts,
+                          tune_alpha=self.cfg.agent.tune_alpha,
                           )
 
     def make_network(self, env_spec):

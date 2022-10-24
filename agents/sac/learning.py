@@ -112,6 +112,7 @@ class SACLearner(agents.core.Learner):
                  critic_optimizer: torch.optim.Optimizer,
                  actor_optimizer: torch.optim.Optimizer,
                  batch_size: int = 256,
+                 tune_alpha: bool = True,
                  max_grad_norm: Optional[float] = 40.,
                  epochs: int = 2,
                  policy_update_period: int = 2,
@@ -129,6 +130,7 @@ class SACLearner(agents.core.Learner):
         self._batch_size = batch_size
         self._max_grad_norm = max_grad_norm
 
+        self._tune_alpha = tune_alpha
         self._tau = tau
         self._epochs = epochs
         self._policy_update_period = policy_update_period
@@ -160,8 +162,10 @@ class SACLearner(agents.core.Learner):
         t1 = time.perf_counter()
         metrics = self._train_critic(batch)
         actor_metrics = self._train_actor(batch)
-        alpha_metrics = self._train_alpha(batch)
-        metrics.update({**actor_metrics, **alpha_metrics})
+        metrics.update(actor_metrics)
+        if self._tune_alpha:
+            alpha_metrics = self._train_alpha(batch)
+            metrics.update(alpha_metrics)
         # if self._step_counter % self._policy_update_period == 0:
         #     for _ in range(self._policy_update_period):
         #         metrics.update(actor_metrics)
@@ -208,9 +212,11 @@ class SACLearner(agents.core.Learner):
         return metrics
 
     def _train_actor(self, batch: NestedTensor) -> Dict[str, float]:
-        loss, metrics = actor_loss(self._model, self._critic, batch)
+        # hook = self._critic.register_full_backward_hook(clip_dqda)
+        loss, metrics = actor_loss(self._model._wrapped, self._critic, batch)
         self._actor_optimizer.zero_grad(set_to_none=True)
         loss.backward()
+        # hook.remove()
         if self._max_grad_norm is not None:
             total_norm = torch.nn.utils.clip_grad_norm_(self._model.parameters(), self._max_grad_norm)
             metrics["train/actor_grad_norm"] = total_norm
@@ -223,6 +229,12 @@ class SACLearner(agents.core.Learner):
         loss.backward()
         self._critic_optimizer.step()
         return metrics
+
+
+def clip_dqda(m, grad_input, grad_output):
+    dq_ds, dq_da = grad_input
+    dq_da = dq_da / dq_da.norm(p=2, dim=1, keepdim=True).clamp_max(1)
+    return (dq_ds, dq_da)
 
 
 def critic_loss(actor, critic, batch, gamma=0.99):
