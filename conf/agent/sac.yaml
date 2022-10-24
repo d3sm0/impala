@@ -6,7 +6,7 @@ target_network_frequency: 1
 exploration_noise: 1.0 # todo: randomize across actors
 batch_size: 256
 tau: 0.005
-max_grad_norm: 40
+max_grad_norm: null
 alpha: 1.0
 learning_starts: 5000
 optimizer:
