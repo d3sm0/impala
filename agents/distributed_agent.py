@@ -35,6 +35,7 @@ class DistributedAgent(Agent):
         remote_metrics = self._controller.stats(Phase.TRAIN).dict()
         total_samples = remote_metrics["episode_length"]["mean"] * remote_metrics["episode_length"]["count"]
         delta_samples = (total_samples / (time.perf_counter() - self._start_time))
+        self._writer.run.log({"debug/total_samples": total_samples})
         self._writer.run.log({f"train_envs/{k.replace('/', '_')}": v['mean'] for k, v in remote_metrics.items()})
         self._writer.run.log({"debug/samples_per_second": delta_samples})
         return total_samples

@@ -39,12 +39,12 @@ class D4PGCritic(nn.Module):
     def __init__(self, observation_space, action_space):
         super(D4PGCritic, self).__init__()
         self.body = nn.Sequential(
-            init_(nn.Linear(np.prod(observation_space) + np.prod(action_space), 400)),
-            nn.LayerNorm(400),
+            init_(nn.Linear(np.prod(observation_space) + np.prod(action_space), 256)),
+            nn.LayerNorm(256),
             nn.Tanh(),
-            init_(nn.Linear(400, 300)),
-            nn.ELU(),
-            init_(nn.Linear(300, 1))
+            init_(nn.Linear(256, 256)),
+            nn.Tanh(),
+            init_(nn.Linear(256, 1))
         )
 
     def forward(self, x, a):
@@ -73,11 +73,11 @@ class D4PGACtorBody(nn.Module):
     def __init__(self, observation_space: Tuple[int, ...]):
         super(D4PGACtorBody, self).__init__()
         self.body = nn.Sequential(
-            init_(nn.Linear(np.prod(observation_space), 300)),
-            nn.LayerNorm(300),
+            init_(nn.Linear(np.prod(observation_space), 256)),
+            nn.LayerNorm(256),
             nn.Tanh(),
-            init_(nn.Linear(300, 200)),
-            nn.ELU()
+            init_(nn.Linear(256, 256)),
+            nn.Tanh()
         )
 
     def forward(self, x):
@@ -86,7 +86,7 @@ class D4PGACtorBody(nn.Module):
 
     @property
     def output_dim(self):
-        return 200
+        return 256
 
 
 class ActorBody(nn.Module):
@@ -152,17 +152,17 @@ class Critic(nn.Module):
 
 
 class SoftCritic(nn.Module):
-    def __init__(self, observation_space, action_space, alpha=0.2):
+    def __init__(self, observation_space, action_space, alpha=1.):
         super().__init__()
         self.critic = Critic(observation_space, action_space)
         self.target_critic = Critic(observation_space, action_space)
         self.target_critic.load_state_dict(self.critic.state_dict())
         self.register_parameter("log_alpha",
-                                nn.Parameter(torch.tensor(math.log(alpha), dtype=torch.float32), requires_grad=False))
+                                nn.Parameter(torch.tensor(math.log(alpha), dtype=torch.float32), requires_grad=True))
         self.register_buffer("target_entropy", nn.Parameter(torch.tensor(-np.prod(action_space), dtype=torch.float32),
                                                             requires_grad=False))
-        # for param in self.critic_target.parameters():
-        #    param.requires_grad= False
+        for param in self.target_critic.parameters():
+            param.requires_grad = False
 
         # self.share_memory()
 
@@ -200,4 +200,5 @@ class SoftActor(RemotableModel):
 
     def policy(self, s):
         mu, log_std = self.actor(s)
+        #log_std = torch.ones_like(log_std) * math.log(0.2)
         return to_action(mu, log_std)

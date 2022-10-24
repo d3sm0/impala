@@ -1,3 +1,4 @@
+import copy
 import time
 from typing import List, Dict, Optional
 
@@ -42,8 +43,11 @@ class SACActorRemote(agents.core.Actor):
             return
         obs = self._last_transition
         act, action_info = action
-        next_obs, reward, done, _ = next_timestep
+        next_obs, reward, done, info = next_timestep
         # self._trajectory.append((obs, act, reward, next_obs, done))
+        is_truncated = info['TimeLimit.truncated']
+        mask = torch.argwhere(torch.tensor(is_truncated, dtype=torch.bool).to(done.device)).squeeze(1)
+        done = done.scatter(0, mask, False)
         self._trajectory.stack((obs, act, reward, next_obs, done))
         self._last_transition = next_obs.clone()
 
@@ -103,6 +107,7 @@ class SACLearner(agents.core.Learner):
     def __init__(self,
                  model: ModelLike,
                  critic: ModelLike,
+                 target_actor: ModelLike,
                  replay_buffer: ReplayBufferLike,
                  critic_optimizer: torch.optim.Optimizer,
                  actor_optimizer: torch.optim.Optimizer,
@@ -134,6 +139,7 @@ class SACLearner(agents.core.Learner):
         self._step_counter = 0
         self._device = None
         self._rb_cursor = None
+        self._target_actor = copy.deepcopy(target_actor)
         # the critic is local citizen hence share memory
         # self._critic.share_memory()
 
@@ -154,11 +160,12 @@ class SACLearner(agents.core.Learner):
         t1 = time.perf_counter()
         metrics = self._train_critic(batch)
         actor_metrics = self._train_actor(batch)
-        metrics.update(actor_metrics)
+        alpha_metrics = self._train_alpha(batch)
+        metrics.update({**actor_metrics, **alpha_metrics})
         # if self._step_counter % self._policy_update_period == 0:
-        #    for _ in range(self._policy_update_period):
-        #        # alpha_metrics = self._train_alpha(batch)
-        #        metrics.update({**actor_metrics})  # , **alpha_metrics})
+        #     for _ in range(self._policy_update_period):
+        #         metrics.update(actor_metrics)
+        #         # alpha_metrics = self._train_alpha(batch)
         t2 = time.perf_counter()
         update_time = 0
         if self._step_counter % self._model_push_period == 0:
@@ -171,13 +178,13 @@ class SACLearner(agents.core.Learner):
         # if self._step_counter % 100 == 0:
         #     with torch.no_grad():
         #         self._critic.target_critic.load_state_dict(self._critic.critic.state_dict())
-        #         self._target_actor.load_state_dict(self._model.state_dict())
+        #         # self._target_actor.load_state_dict(self._model.state_dict())
         with torch.no_grad():
             for param, target_param in zip(self._critic.critic.parameters(), self._critic.target_critic.parameters()):
                 target_param.data.copy_(self._tau * param.data + (1 - self._tau) * target_param.data)
 
-        #    for param, target_param in zip(self._target_actor.parameters(), self._model.actor.parameters()):
-        #        target_param.data.copy_(self._tau * param.data + (1 - self._tau) * target_param.data)
+            for param, target_param in zip(self._model.parameters(), self._target_actor.parameters()):
+                target_param.data.copy_(self._tau * param.data + (1 - self._tau) * target_param.data)
 
         self._step_counter += 1
 
@@ -190,28 +197,29 @@ class SACLearner(agents.core.Learner):
         return metrics
 
     def _train_critic(self, batch: NestedTensor) -> Dict[str, float]:
-        loss, metrics = critic_loss(self._model, self._critic, batch)
-        self._critic_optimizer.zero_grad()
+        loss, metrics = critic_loss(self._target_actor, self._critic, batch)
+        # Do not move this after the loss because actor loss generates a gradient for the critic
+        self._critic_optimizer.zero_grad(set_to_none=True)
         loss.backward()
-        total_norm = torch.nn.utils.clip_grad_norm_(self._critic.parameters(), self._max_grad_norm)
-        metrics["train/critic_grad_norm"] = total_norm
+        # total_norm = torch.nn.utils.clip_grad_norm_(self._critic.parameters(), self._max_grad_norm)
+        # metrics["train/critic_grad_norm"] = total_norm
         self._critic_optimizer.step()
         return metrics
 
     def _train_actor(self, batch: NestedTensor) -> Dict[str, float]:
         loss, metrics = actor_loss(self._model, self._critic, batch)
-        self._actor_optimizer.zero_grad()
+        self._actor_optimizer.zero_grad(set_to_none=True)
         loss.backward()
-        total_norm = torch.nn.utils.clip_grad_norm_(self._model.parameters(), self._max_grad_norm)
-        metrics["train/actor_grad_norm"] = total_norm
+        # total_norm = torch.nn.utils.clip_grad_norm_(self._model.parameters(), self._max_grad_norm)
+        # metrics["train/actor_grad_norm"] = total_norm
         self._actor_optimizer.step()
         return metrics
 
     def _train_alpha(self, batch: NestedTensor) -> Dict[str, float]:
         loss, metrics = alpha_loss(self._model, self._critic, batch)
+        self._critic_optimizer.zero_grad(set_to_none=True)
         loss.backward()
         self._critic_optimizer.step()
-        self._critic_optimizer.zero_grad(set_to_none=True)
         return metrics
 
 

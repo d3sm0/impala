@@ -101,6 +101,14 @@ def main(cfg):
     for epoch in range(cfg.training.num_epochs):
         total_samples = agent.train(cfg.training.steps_per_epoch)
         agent.eval(cfg.evaluation.num_rollouts, keep_training_loops=False)
+        if epoch % 100 == 0 or total_samples > cfg.task.total_frames:
+            torch.save(builder.learner_model, os.path.join(writer.run.dir, f"model-{epoch}.pt"))
+            writer.run.save(
+                os.path.join(writer.run.dir, f"model-{epoch}.pt"),
+            )
+            writer.run.config.update({
+                "latest": f"model-{epoch}.pt"
+            })
         if total_samples > cfg.task.total_frames:
             break
     loops.terminate()
