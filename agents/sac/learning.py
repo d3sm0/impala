@@ -201,8 +201,9 @@ class SACLearner(agents.core.Learner):
         # Do not move this after the loss because actor loss generates a gradient for the critic
         self._critic_optimizer.zero_grad(set_to_none=True)
         loss.backward()
-        # total_norm = torch.nn.utils.clip_grad_norm_(self._critic.parameters(), self._max_grad_norm)
-        # metrics["train/critic_grad_norm"] = total_norm
+        if self._max_grad_norm is not None:
+            total_norm = torch.nn.utils.clip_grad_norm_(self._critic.parameters(), self._max_grad_norm)
+            metrics["train/critic_grad_norm"] = total_norm
         self._critic_optimizer.step()
         return metrics
 
@@ -210,8 +211,9 @@ class SACLearner(agents.core.Learner):
         loss, metrics = actor_loss(self._model, self._critic, batch)
         self._actor_optimizer.zero_grad(set_to_none=True)
         loss.backward()
-        # total_norm = torch.nn.utils.clip_grad_norm_(self._model.parameters(), self._max_grad_norm)
-        # metrics["train/actor_grad_norm"] = total_norm
+        if self._max_grad_norm is not None:
+            total_norm = torch.nn.utils.clip_grad_norm_(self._model.parameters(), self._max_grad_norm)
+            metrics["train/actor_grad_norm"] = total_norm
         self._actor_optimizer.step()
         return metrics
 
@@ -247,7 +249,7 @@ def actor_loss(actor, critic, batch):
     qf1_pi, qf2_pi = critic(s, pi)
     min_qf_pi = torch.min(qf1_pi, qf2_pi)
     actor_loss = ((critic.alpha * log_pi) - min_qf_pi).mean()
-    return actor_loss, {"train/actor_loss": actor_loss, "train/actor_std": std.sum(dim=-1).mean()}
+    return actor_loss, {"train/actor_loss": actor_loss, "train/actor_std": std.mean(dim=-1).mean()}
 
 
 def alpha_loss(actor, critic, batch):
