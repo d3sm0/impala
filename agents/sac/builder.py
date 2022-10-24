@@ -1,4 +1,3 @@
-import copy
 from typing import Optional
 
 import rlmeta.core.replay_buffer
@@ -61,8 +60,8 @@ class SACBuilder(Builder):
         actor = SoftActor(env_spec.observation_space.shape, env_spec.action_space.shape).to(
             self.cfg.distributed.train_device)
         self._learner_model = (actor, critic)
-        inference_model = copy.deepcopy(actor).to(self.cfg.distributed.infer_device)
-        for param in inference_model.parameters():
-            param.requires_grad = False
+        inference_model = SoftActor(env_spec.observation_space.shape, env_spec.action_space.shape).to(
+            self.cfg.distributed.infer_device)
+        inference_model.load_state_dict(actor.state_dict())
         self._actor_model = inference_model
         return actor
