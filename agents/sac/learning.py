@@ -213,7 +213,7 @@ class SACLearner(agents.core.Learner):
 
     def _train_actor(self, batch: NestedTensor) -> Dict[str, float]:
         # hook = self._critic.register_full_backward_hook(clip_dqda)
-        loss, metrics = actor_loss(self._model._wrapped, self._critic, batch)
+        loss, metrics = actor_loss(self._model, self._critic, batch)
         self._actor_optimizer.zero_grad(set_to_none=True)
         loss.backward()
         # hook.remove()
