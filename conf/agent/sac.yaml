@@ -9,6 +9,7 @@ tau: 0.005
 max_grad_norm: 40
 alpha: 1.0
 tune_alpha: true
+n_steps: 3
 learning_starts: 5000
 optimizer:
   eps: 1e-5
