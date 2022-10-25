@@ -142,6 +142,7 @@ class SACLearner(agents.core.Learner):
         self._device = None
         self._rb_cursor = None
         self._target_actor = copy.deepcopy(target_actor)
+        self._sampler_future = None
         # the critic is local citizen hence share memory
         # self._critic.share_memory()
 
@@ -157,10 +158,10 @@ class SACLearner(agents.core.Learner):
 
     def train_step(self):
         t0 = time.perf_counter()
-        _, batch, _ = self._replay_buffer.sample(self._batch_size)
+        keys, batch, values = self._replay_buffer.sample(self._batch_size)
         batch = nested_utils.map_nested(lambda x: x.to(self.device()).squeeze(dim=-1), batch)
         t1 = time.perf_counter()
-        metrics = self._train_critic(batch)
+        metrics, next_priorities = self._train_critic(batch, values)
         actor_metrics = self._train_actor(batch)
         metrics.update(actor_metrics)
         if self._tune_alpha:
@@ -190,6 +191,10 @@ class SACLearner(agents.core.Learner):
             for param, target_param in zip(self._model.parameters(), self._target_actor.parameters()):
                 target_param.data.copy_(self._tau * param.data + (1 - self._tau) * target_param.data)
 
+        if self._sampler_future is not None:
+            self._sampler_future.wait()
+        self._sampler_future = self._replay_buffer.async_update(keys, next_priorities)
+
         self._step_counter += 1
 
         metrics["debug/replay_sample_per_second"] = (self._batch_size / ((t1 - t0) * 1000))
@@ -200,8 +205,14 @@ class SACLearner(agents.core.Learner):
         metrics["debug/update_dt"] = update_time * 1000
         return metrics
 
-    def _train_critic(self, batch: NestedTensor) -> Dict[str, float]:
-        loss, metrics = critic_loss(self._target_actor, self._critic, batch)
+    def _train_critic(self, batch: NestedTensor, probabilities) -> Dict[str, float]:
+
+        probabilities = probabilities.to(dtype=torch.float32, device=self.device())
+        weight = probabilities.pow(-0.4)
+        weight.div_(weight.max())
+
+        loss, next_priorities, metrics = critic_loss(self._target_actor, self._critic, batch, weight=weight)
+
         # Do not move this after the loss because actor loss generates a gradient for the critic
         self._critic_optimizer.zero_grad(set_to_none=True)
         loss.backward()
@@ -209,7 +220,8 @@ class SACLearner(agents.core.Learner):
             total_norm = torch.nn.utils.clip_grad_norm_(self._critic.parameters(), self._max_grad_norm)
             metrics["train/critic_grad_norm"] = total_norm
         self._critic_optimizer.step()
-        return metrics
+
+        return metrics, next_priorities.cpu()
 
     def _train_actor(self, batch: NestedTensor) -> Dict[str, float]:
         # hook = self._critic.register_full_backward_hook(clip_dqda)
@@ -231,13 +243,7 @@ class SACLearner(agents.core.Learner):
         return metrics
 
 
-def clip_dqda(m, grad_input, grad_output):
-    dq_ds, dq_da = grad_input
-    dq_da = dq_da / dq_da.norm(p=2, dim=1, keepdim=True).clamp_max(1)
-    return (dq_ds, dq_da)
-
-
-def critic_loss(actor, critic, batch, gamma=0.99):
+def critic_loss(actor, critic, batch, weight, gamma=0.99):
     s, a, r, s1, d = batch
 
     with torch.no_grad():
@@ -245,18 +251,18 @@ def critic_loss(actor, critic, batch, gamma=0.99):
         qf1_next_target, qf2_next_target = critic.target_critic(s1, next_state_actions)
         min_qf_next_target = torch.min(qf1_next_target, qf2_next_target) - critic.alpha * next_state_log_pi
         next_q_value = r + d.logical_not() * gamma * min_qf_next_target
-        # next_q_value = rlego.discounted_returns(r, torch.logical_not(d) * gamma, min_qf_next_target)
     qf1, qf2 = critic(s, a)
-
-    qf1_loss = (next_q_value - qf1).pow(2).mean()
-    qf2_loss = (next_q_value - qf2).pow(2).mean()
+    with torch.no_grad():
+        next_priorities = (next_q_value - torch.min(qf1, qf2)).abs()
+    qf1_loss = (next_q_value - qf1).pow(2).mul(weight).mean()
+    qf2_loss = (next_q_value - qf2).pow(2).mul(weight).mean()
     qf_loss = qf1_loss + qf2_loss
-    return qf_loss, {"train/qf1_loss": qf1_loss, "train/qf2_loss": qf2_loss, "train/qf1": qf1.mean(),
-                     "train/qf2": qf2.mean(), "train/qf_loss": qf_loss / 2.}
+    return qf_loss, next_priorities, {"train/qf1_loss": qf1_loss, "train/qf2_loss": qf2_loss, "train/qf1": qf1.mean(),
+                                      "train/qf2": qf2.mean(), "train/qf_loss": qf_loss / 2.}
 
 
 def actor_loss(actor, critic, batch):
-    s, a, r, s1, d = batch
+    s, a, *_ = batch
     pi, log_pi, std = actor.policy(s)
     qf1_pi, qf2_pi = critic(s, pi)
     min_qf_pi = torch.min(qf1_pi, qf2_pi)
@@ -265,7 +271,7 @@ def actor_loss(actor, critic, batch):
 
 
 def alpha_loss(actor, critic, batch):
-    s, a, r, s1, d = batch
+    s, a, *_ = batch
     with torch.no_grad():
         _, log_pi, _ = actor.policy(s)
     alpha_loss = - (critic.log_alpha * (log_pi + critic.target_entropy)).mean()
