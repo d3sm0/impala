@@ -225,7 +225,7 @@ class SoftActorCritic(RemotableModel):
             std = log_std.exp()
             x_t = mu + std * torch.randn_like(std) * eps
             action = torch.tanh(x_t) * self.actor.action_scale + self.actor.action_bias
-            target_value = self.critic.target(obs, action)
+            target_value = self.critic.critic(obs, action)
             target_value = torch.min(target_value[0], target_value[1])
         return action.cpu(), target_value.cpu()
 
