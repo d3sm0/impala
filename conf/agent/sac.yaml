@@ -7,11 +7,11 @@ exploration_noise: 1.0 # todo: randomize across actors
 batch_size: 256
 tau: 0.005
 max_grad_norm: 40
-alpha: 1.
+alpha: 1.0
 tune_alpha: true
 learning_starts: 5000
 optimizer:
   eps: 1e-5
-  actor_lr: 0.0003
+  actor_lr: 0.003
   critic_lr: 0.003
 
