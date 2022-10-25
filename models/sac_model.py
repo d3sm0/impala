@@ -29,8 +29,8 @@ def to_action(mean, log_std, action_scale=1.0, action_bias=0.):
     return action, log_prob, std
 
 
-init_ = models.common.layer_init_uniform
-act = nn.Tanh
+# init_ = models.common.layer_init_uniform
+init_ = functools.partial(models.common.layer_init_act, act='selu')
 
 near_zero_init = functools.partial(models.common.layer_init_truncated, scale=1e-4)
 
@@ -77,9 +77,9 @@ class SoftQNetwork(nn.Module):
         super().__init__()
         self.body = nn.Sequential(
             init_(nn.Linear(np.array(observation_space).prod() + np.prod(action_space), 256)),
-            nn.ReLU(),
+            nn.SELU(),
             init_(nn.Linear(256, 256)),
-            nn.ReLU(),
+            nn.SELU(),
             init_(nn.Linear(256, 1))
         )
 
@@ -95,9 +95,9 @@ class ActorBody(nn.Module):
 
         self.body = nn.Sequential(
             init_(nn.Linear(np.array(observation_space).prod(), 256)),
-            nn.ReLU(),
+            nn.SELU(),
             init_(nn.Linear(256, 256)),
-            nn.ReLU(),
+            nn.SELU(),
         )
 
     def forward(self, x):
@@ -200,6 +200,4 @@ class SoftActor(RemotableModel):
 
     def policy(self, s):
         mu, log_std = self.actor(s)
-        # log_std = torch.ones_like(log_std) * math.log(0.1)
-        # log_std = log_std + (target_log_std - log_std).detach()
         return to_action(mu, log_std)

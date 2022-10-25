@@ -152,6 +152,13 @@ def layer_init_truncated(layer, scale=1.):
     return layer
 
 
+def layer_init_act(layer, act):
+    with torch.no_grad():
+        torch.nn.init.kaiming_normal_(layer.weight, mode='fan_in', nonlinearity=act)
+        torch.nn.init.constant_(layer.bias, 0.)
+    return layer
+
+
 def layer_init_uniform(layer, scale: float = 0.33):
     with torch.no_grad():
         fan_in = layer_fan_in(layer)
