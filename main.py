@@ -5,25 +5,23 @@
 import logging
 import os
 import random
-import sys
 
 import experiment_buddy
 import hydra
 import moolib
 import numpy as np
-
 import omegaconf
 import torch
 import torch.backends.cudnn
 import torch.multiprocessing as mp
+import wandb
 from rlmeta.core.controller import Controller
 from rlmeta.core.loop import LoopList
 
 import envs
 import utils
-import wandb
 from agents.distributed_agent import DistributedAgent
-from agents.sac.builder import SACBuilder
+from agents.dqn.builder import ApexDQNBuilder
 
 moolib.set_log_level("debug")
 logger = logging.getLogger("root")
@@ -60,23 +58,20 @@ def main(cfg):
     np.random.seed(cfg.training.seed)
     random.seed(cfg.training.seed)
 
-    writer = experiment_buddy.deploy(host=cfg.distributed.host,
-                                     disabled=sys.gettrace() is not None,
-                                     wandb_kwargs={"project": "impala",
-                                                   "settings": wandb.Settings(start_method="thread"),
+    writer = experiment_buddy.deploy(host="mila",
+                                     debug=False,  # sys.gettrace() is not None,
+                                     wandb_kwargs={"settings": wandb.Settings(start_method="thread"),
+                                                   "config": omegaconf.OmegaConf.to_container(cfg, resolve=True),
                                                    # "mode": "disabled",
-                                                   "config": omegaconf.OmegaConf.to_container(
-                                                       cfg, resolve=True),
                                                    # "tags": [cfg.distributed.host,
                                                    #          cfg.task.benchmark]
                                                    },
                                      extra_modules=["cuda/11.1/cudnn/8.0", "python/3.7", "gcc", "libffi"])
     # writer = utils.Writer()
-    # builder = ApexDQNBuilder(cfg)
+    builder = ApexDQNBuilder(cfg)
     # builder = ApexDistributionalBuilder(cfg)
     # builder = PPOBuilder(cfg)
     # builder = ImpalaBuilder(cfg)
-    builder = SACBuilder(cfg)
 
     env_factory = envs.EnvFactory(cfg.task.env_id, library_str=cfg.task.benchmark)
     # TODO: make spec here
