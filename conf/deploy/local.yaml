@@ -2,10 +2,9 @@
 
 distributed:
   infer_device: "cuda:0"
-  host: ""
 training:
-  num_workers: 1
-  num_rollouts: 1
+  num_workers: 8
+  num_rollouts: 16
   steps_per_epoch: 1000
 # task:
 #   env_id: "InvertedDoublePendulum-v4"

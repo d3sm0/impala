@@ -39,8 +39,15 @@ logger.setLevel(logging.DEBUG)
 @hydra.main(version_base=None, config_path="./conf", config_name="config")
 def main(cfg):
     # Meh
-    if "SLURM_JOB_ID" in os.environ.keys() or cfg.distributed.host == "mila":
+    if "SLURM_JOB_ID" in os.environ.keys():
         cfg = omegaconf.OmegaConf.merge(cfg, omegaconf.OmegaConf.load("conf/deploy/mila.yaml"))
+        master_port = random.randint(4440, 4460)
+        omegaconf.OmegaConf.update(cfg, "distributed", {
+            "r_port": master_port + 1,
+            "m_port": master_port + 2,
+            "c_port": master_port + 3,
+
+        }, merge=True)
     else:
         cfg = omegaconf.OmegaConf.merge(cfg, omegaconf.OmegaConf.load("conf/deploy/local.yaml"))
     omegaconf.OmegaConf.resolve(cfg)
