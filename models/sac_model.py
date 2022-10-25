@@ -52,23 +52,6 @@ class D4PGCritic(nn.Module):
         return self.body(x).squeeze(dim=-1)
 
 
-class SoftQNetwork(nn.Module):
-    def __init__(self, observation_space, action_space):
-        super().__init__()
-        self.body = nn.Sequential(
-            init_(nn.Linear(np.array(observation_space).prod() + np.prod(action_space), 256)),
-            nn.ReLU(),
-            init_(nn.Linear(256, 256)),
-            nn.ReLU(),
-            init_(nn.Linear(256, 1))
-        )
-
-    def forward(self, x, a):
-        x = torch.cat([x, a], dim=-1)
-        x = self.body(x)
-        return x.squeeze(-1)
-
-
 class D4PGACtorBody(nn.Module):
     def __init__(self, observation_space: Tuple[int, ...]):
         super(D4PGACtorBody, self).__init__()
@@ -89,15 +72,32 @@ class D4PGACtorBody(nn.Module):
         return 256
 
 
+class SoftQNetwork(nn.Module):
+    def __init__(self, observation_space, action_space):
+        super().__init__()
+        self.body = nn.Sequential(
+            init_(nn.Linear(np.array(observation_space).prod() + np.prod(action_space), 256)),
+            nn.Tanh(),
+            init_(nn.Linear(256, 256)),
+            nn.Tanh(),
+            init_(nn.Linear(256, 1))
+        )
+
+    def forward(self, x, a):
+        x = torch.cat([x, a], dim=-1)
+        x = self.body(x)
+        return x.squeeze(-1)
+
+
 class ActorBody(nn.Module):
     def __init__(self, observation_space):
         super().__init__()
 
         self.body = nn.Sequential(
             init_(nn.Linear(np.array(observation_space).prod(), 256)),
-            nn.ReLU(),
+            nn.Tanh(),
             init_(nn.Linear(256, 256)),
-            nn.ReLU(),
+            nn.Tanh(),
         )
 
     def forward(self, x):
@@ -200,6 +200,6 @@ class SoftActor(RemotableModel):
 
     def policy(self, s):
         mu, log_std = self.actor(s)
-        #log_std = torch.ones_like(log_std) * math.log(0.1)
-        #log_std = log_std + (target_log_std - log_std).detach()
+        # log_std = torch.ones_like(log_std) * math.log(0.1)
+        # log_std = log_std + (target_log_std - log_std).detach()
         return to_action(mu, log_std)
