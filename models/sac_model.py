@@ -57,9 +57,9 @@ class SoftQNetwork(nn.Module):
         super().__init__()
         self.body = nn.Sequential(
             init_(nn.Linear(np.array(observation_space).prod() + np.prod(action_space), 256)),
-            nn.ReLU(),
+            nn.GELU(),
             init_(nn.Linear(256, 256)),
-            nn.ReLU(),
+            nn.GELU(),
             init_(nn.Linear(256, 1))
         )
 
@@ -95,9 +95,9 @@ class ActorBody(nn.Module):
 
         self.body = nn.Sequential(
             init_(nn.Linear(np.array(observation_space).prod(), 256)),
-            nn.ReLU(),
+            nn.GELU(),
             init_(nn.Linear(256, 256)),
-            nn.ReLU(),
+            nn.GELU(),
         )
 
     def forward(self, x):
