@@ -140,11 +140,7 @@ class SACLearner(agents.core.Learner):
 
         self._step_counter = 0
         self._device = None
-        self._rb_cursor = None
         self._target_actor = copy.deepcopy(target_actor)
-        self._sampler_future = None
-        # the critic is local citizen hence share memory
-        # self._critic.share_memory()
 
     def device(self) -> torch.device:
         if self._device is None:
@@ -161,16 +157,12 @@ class SACLearner(agents.core.Learner):
         keys, batch, values = self._replay_buffer.sample(self._batch_size)
         batch = nested_utils.map_nested(lambda x: x.to(self.device()).squeeze(dim=-1), batch)
         t1 = time.perf_counter()
-        metrics, next_priorities = self._train_critic(batch, values)
+        metrics = self._train_critic(batch)
         actor_metrics = self._train_actor(batch)
         metrics.update(actor_metrics)
         if self._tune_alpha:
             alpha_metrics = self._train_alpha(batch)
             metrics.update(alpha_metrics)
-        # if self._step_counter % self._policy_update_period == 0:
-        #     for _ in range(self._policy_update_period):
-        #         metrics.update(actor_metrics)
-        #         # alpha_metrics = self._train_alpha(batch)
         t2 = time.perf_counter()
         update_time = 0
         if self._step_counter % self._model_push_period == 0:
@@ -178,12 +170,6 @@ class SACLearner(agents.core.Learner):
             self._model.push()
             update_time = time.perf_counter() - start
 
-        capacity, size = self._replay_buffer.info()
-        metrics["debug/rb_capacity"] = capacity
-        # if self._step_counter % 100 == 0:
-        #     with torch.no_grad():
-        #         self._critic.target_critic.load_state_dict(self._critic.critic.state_dict())
-        #         # self._target_actor.load_state_dict(self._model.state_dict())
         with torch.no_grad():
             for param, target_param in zip(self._critic.critic.parameters(), self._critic.target_critic.parameters()):
                 target_param.data.copy_(self._tau * param.data + (1 - self._tau) * target_param.data)
@@ -191,12 +177,10 @@ class SACLearner(agents.core.Learner):
             for param, target_param in zip(self._model.parameters(), self._target_actor.parameters()):
                 target_param.data.copy_(self._tau * param.data + (1 - self._tau) * target_param.data)
 
-        # if self._sampler_future is not None:
-        #     self._sampler_future.wait()
-        # self._sampler_future = self._replay_buffer.async_update(keys, next_priorities)
-
         self._step_counter += 1
 
+        # capacity, size = self._replay_buffer.info()
+        # metrics["debug/rb_capacity"] = capacity
         metrics["debug/replay_sample_per_second"] = (self._batch_size / ((t1 - t0) * 1000))
         metrics["debug/gradient_per_second"] = (self._batch_size / ((t2 - t1) * 1000))
         metrics["debug/total_time"] = (time.perf_counter() - t0) * 1000
@@ -205,13 +189,9 @@ class SACLearner(agents.core.Learner):
         metrics["debug/update_dt"] = update_time * 1000
         return metrics
 
-    def _train_critic(self, batch: NestedTensor, probabilities) -> Dict[str, float]:
+    def _train_critic(self, batch: NestedTensor) -> Dict[str, float]:
 
-        probabilities = probabilities.to(dtype=torch.float32, device=self.device())
-        weight = probabilities.pow(-0.4)
-        weight.div_(weight.max())
-
-        loss, next_priorities, metrics = critic_loss(self._target_actor, self._critic, batch, weight=weight)
+        loss, metrics = critic_loss(self._target_actor, self._critic, batch)
 
         # Do not move this after the loss because actor loss generates a gradient for the critic
         self._critic_optimizer.zero_grad(set_to_none=True)
@@ -221,14 +201,12 @@ class SACLearner(agents.core.Learner):
             metrics["train/critic_grad_norm"] = total_norm
         self._critic_optimizer.step()
 
-        return metrics, next_priorities.cpu()
+        return metrics
 
     def _train_actor(self, batch: NestedTensor) -> Dict[str, float]:
-        # hook = self._critic.register_full_backward_hook(clip_dqda)
         loss, metrics = actor_loss(self._model, self._critic, batch)
         self._actor_optimizer.zero_grad(set_to_none=True)
         loss.backward()
-        # hook.remove()
         if self._max_grad_norm is not None:
             total_norm = torch.nn.utils.clip_grad_norm_(self._model.parameters(), self._max_grad_norm)
             metrics["train/actor_grad_norm"] = total_norm
@@ -243,7 +221,7 @@ class SACLearner(agents.core.Learner):
         return metrics
 
 
-def critic_loss(actor, critic, batch, weight, gamma=0.99):
+def critic_loss(actor, critic, batch, gamma=0.99):
     s, a, r, s1, d = batch
 
     with torch.no_grad():
@@ -252,13 +230,11 @@ def critic_loss(actor, critic, batch, weight, gamma=0.99):
         min_qf_next_target = torch.min(qf1_next_target, qf2_next_target) - critic.alpha * next_state_log_pi
         next_q_value = r + d.logical_not() * gamma * min_qf_next_target
     qf1, qf2 = critic(s, a)
-    with torch.no_grad():
-        next_priorities = (next_q_value - torch.min(qf1, qf2)).abs()
-    qf1_loss = (next_q_value - qf1).pow(2).mul(weight).mean()
-    qf2_loss = (next_q_value - qf2).pow(2).mul(weight).mean()
+    qf1_loss = (next_q_value - qf1).pow(2).mean()
+    qf2_loss = (next_q_value - qf2).pow(2).mean()
     qf_loss = qf1_loss + qf2_loss
-    return qf_loss, next_priorities, {"train/qf1_loss": qf1_loss, "train/qf2_loss": qf2_loss, "train/qf1": qf1.mean(),
-                                      "train/qf2": qf2.mean(), "train/qf_loss": qf_loss / 2.}
+    return qf_loss, {"train/qf1_loss": qf1_loss, "train/qf2_loss": qf2_loss, "train/qf1": qf1.mean(),
+                     "train/qf2": qf2.mean(), "train/qf_loss": qf_loss / 2.}
 
 
 def actor_loss(actor, critic, batch):

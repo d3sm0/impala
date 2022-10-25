@@ -12,9 +12,7 @@ import hydra
 import moolib
 import numpy as np
 
-moolib.set_log_level("debug")
 import omegaconf
-import rlmeta.utils.hydra_utils as hydra_utils
 import torch
 import torch.backends.cudnn
 import torch.multiprocessing as mp
@@ -30,6 +28,7 @@ from agents.sac.builder import SACBuilder
 logger = logging.getLogger("root")
 logger.addHandler(logging.StreamHandler())
 logger.setLevel(logging.DEBUG)
+moolib.set_log_level("debug")
 
 
 # from agents.ppo.builder import PPOBuilder

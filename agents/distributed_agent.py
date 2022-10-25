@@ -17,7 +17,6 @@ class DistributedAgent(Agent):
         self._controller = controller
         self._learner = learner
         self._writer = writer
-        self._stats_dict = StatsDict()
         self._start_time = time.perf_counter()
 
     def set_phase(self, phase=Phase.TRAIN):
@@ -28,9 +27,7 @@ class DistributedAgent(Agent):
         self._learner.prepare()
         for local_steps in rich.progress.track(range(num_steps), description="Training"):
             metrics = self._learner.train_step()
-            self._stats_dict.extend({k: float(v) for k, v in metrics.items()})
             if local_steps % 100 == 0:
-                # self._writer.run.log({f"{k}_mean": v['mean'] for k, v in self._stats_dict.dict().items() if "debug" in k})
                 self._writer.run.log({k: float(v) for k, v in metrics.items()})
         remote_metrics = self._controller.stats(Phase.TRAIN).dict()
         total_samples = remote_metrics["episode_length"]["mean"] * remote_metrics["episode_length"]["count"]
@@ -38,6 +35,7 @@ class DistributedAgent(Agent):
         self._writer.run.log({"debug/total_samples": total_samples})
         self._writer.run.log({f"train_envs/{k.replace('/', '_')}": v['mean'] for k, v in remote_metrics.items()})
         self._writer.run.log({"debug/samples_per_second": delta_samples})
+        self._controller.reset_phase(Phase.TRAIN)
         return total_samples
 
     def eval(self,
