@@ -33,7 +33,7 @@ class DQN(nn.Module):
             models.common.layer_init_truncated(nn.Linear(obs_dim, h_dim)),
             nn.ReLU())
 
-        self.q = DuellingHead(h_dim, action_dim, h_dim=h_dim)
+        self.q = DuelingHead(h_dim, action_dim, h_dim=h_dim)
 
     def forward(self, x):
         h = self.body(x)
@@ -41,7 +41,7 @@ class DQN(nn.Module):
         return q
 
 
-class DuellingHead(nn.Module):
+class DuelingHead(nn.Module):
     def __init__(self, input_dim: int, output_dim: int, h_dim: int = 512):
         super().__init__()
         self.body = nn.Sequential(
@@ -80,7 +80,7 @@ class DuellingAtariNetwork(nn.Module):
     def __init__(self, obs_dim: Tuple[int, ...], action_dim: int, h_dim: int = 512):
         super().__init__()
         self.body = models.common.AtariBody(obs_dim)
-        self.q = DuellingHead(self.body.output_dim, action_dim, h_dim=h_dim)
+        self.q = DuelingHead(self.body.output_dim, action_dim, h_dim=h_dim)
 
     def forward(self, s):
         h = self.body(s / 255.)

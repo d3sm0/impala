@@ -131,10 +131,12 @@ def make_atari(task_id, batch_size=1, seed=33, async_envs=False, train: bool = T
 
     return env
 
+
 def make_mujoco(task_id, batch_size=1, seed=33, train: bool = True):
     num_envs = batch_size
     env = envpool.make_gym(task_id, batch_size=batch_size, num_envs=num_envs, seed=seed)
     env = ControlWrap(env, f=lambda x: x.astype(np.float32))
     return env
+
 
 _libraries = {"procgen": make_procgen, "atari": make_atari, "mujoco": make_mujoco}

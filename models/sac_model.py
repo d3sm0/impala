@@ -200,6 +200,4 @@ class SoftActor(RemotableModel):
 
     def policy(self, s):
         mu, log_std = self.actor(s)
-        # log_std = torch.ones_like(log_std) * math.log(0.1)
-        # log_std = log_std + (target_log_std - log_std).detach()
         return to_action(mu, log_std)
