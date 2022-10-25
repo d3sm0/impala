@@ -10,7 +10,7 @@ from rlmeta.storage import CircularBuffer
 
 import agents.core
 from agents.sac.learning import SACActorRemote, SACLearner
-from models.sac_model import SoftCritic, SoftActor
+from models.sac_model import SoftActorCritic
 
 
 class SACFactory(AgentFactory):
@@ -37,17 +37,21 @@ class SACBuilder(agents.core.Builder):
 
     def make_actor(self, model: ModelLike, rb: Optional[ReplayBufferLike] = None, deterministic: bool = False):
         exploration_noise = 0. if deterministic else self.cfg.agent.exploration_noise
-        return SACFactory(model, rb, rollout_length=self.cfg.agent.rollout_length, exploration_noise=exploration_noise)
+        return SACFactory(model, rb, rollout_length=self.cfg.agent.rollout_length,
+                          exploration_noise=exploration_noise,
+                          n_steps=self.cfg.agent.n_steps
+                          )
 
     def make_learner(self, model: ModelLike, rb: ReplayBufferLike):
-        actor, critic = self._learner_model
+        critic = model.wrapped.critic
         critic_optimizer = torch.optim.Adam([{"params": critic.critic.parameters()}, {"params": critic.log_alpha}],
                                             lr=self.cfg.agent.optimizer.critic_lr, eps=self.cfg.agent.optimizer.eps)
+        actor = model.wrapped.actor
         actor_optimizer = torch.optim.Adam(actor.parameters(), lr=self.cfg.agent.optimizer.actor_lr,
                                            eps=self.cfg.agent.optimizer.eps)
 
-        return SACLearner(model, critic=critic,
-                          target_actor=actor,
+        return SACLearner(model,
+                          # target_actor=actor,
                           replay_buffer=rb,
                           batch_size=self.cfg.agent.batch_size,
                           critic_optimizer=critic_optimizer,
@@ -58,17 +62,16 @@ class SACBuilder(agents.core.Builder):
                           )
 
     def make_network(self, env_spec):
-        critic = SoftCritic(env_spec.observation_space.shape, env_spec.action_space.shape,
-                            alpha=self.cfg.agent.alpha).to(
-            self.cfg.distributed.train_device)
-        actor = SoftActor(env_spec.observation_space.shape, env_spec.action_space.shape).to(
-            self.cfg.distributed.train_device)
-        self._learner_model = (actor, critic)
-        inference_model = SoftActor(env_spec.observation_space.shape, env_spec.action_space.shape).to(
-            self.cfg.distributed.infer_device)
-        inference_model.load_state_dict(actor.state_dict())
-        for p in inference_model.parameters():
-            p.requires_grad = False
-        self._actor_model = inference_model
+        learner_model = SoftActorCritic(env_spec.observation_space.shape, env_spec.action_space.shape,
+                                        alpha=self.cfg.agent.alpha).to(self.cfg.distributed.train_device)
+        actor_model = SoftActorCritic(env_spec.observation_space.shape, env_spec.action_space.shape,
+                                      alpha=self.cfg.agent.alpha).to(self.cfg.distributed.infer_device)
+        actor_model.load_state_dict(learner_model.state_dict())
 
-        return actor
+        for p in actor_model.parameters():
+            p.requires_grad = False
+
+        self._actor_model = actor_model
+        self._learner_model = learner_model
+
+        return learner_model

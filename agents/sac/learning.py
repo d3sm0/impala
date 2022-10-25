@@ -1,4 +1,3 @@
-import copy
 import time
 from typing import List, Dict, Optional
 
@@ -19,6 +18,7 @@ class SACActorRemote(agents.core.Actor):
                  exploration_noise: float = 0.3,
                  gamma: float = 0.99,
                  rollout_length: int = 100,
+                 n_steps: int = 5,
                  ):
         self._model = model
         self._exploration_noise = torch.tensor([exploration_noise], dtype=torch.float32)
@@ -27,11 +27,12 @@ class SACActorRemote(agents.core.Actor):
         self._rollout_length = rollout_length
         self._trajectory = moolib.Batcher(self._rollout_length, device='cpu', dim=0)
         self._last_transition = None
+        self._nsteps = n_steps
 
     async def async_act(self, timestep: TimeStep) -> Action:
         obs = timestep.observation
-        action = await self._model.async_act(obs, self._exploration_noise)
-        return Action(action)
+        action, value = await self._model.async_act(obs, self._exploration_noise)
+        return Action(action, info={'value': value})
 
     async def async_observe_init(self, timestep: TimeStep) -> None:
         if self._replay_buffer is None:
@@ -49,7 +50,7 @@ class SACActorRemote(agents.core.Actor):
         is_truncated = info['TimeLimit.truncated']
         mask = torch.argwhere(torch.tensor(is_truncated, dtype=torch.bool).to(done.device)).squeeze(1)
         done = done.scatter(0, mask, False)
-        self._trajectory.stack((obs, act, reward, next_obs, done))
+        self._trajectory.stack((obs, act, reward, done, action_info['value']))
         self._last_transition = next_obs.clone()
 
     async def async_update(self) -> None:
@@ -68,12 +69,16 @@ class SACActorRemote(agents.core.Actor):
     def _make_replay(self) -> List[NestedTensor]:
         # return self._trajectory
         # return self._trajectory
-        s, a, r, s1, d = self._trajectory.get()
+        s, a, r, d, v = self._trajectory.get()
+        d = d.logical_not() * self._gamma
+        target = rlego.n_step_bootstrapped_returns(r[:-1].squeeze(dim=-1), d[:-1].squeeze(dim=-1), v_t=v[1:],
+                                                   n=self._nsteps)
+
         # s, a, r, s1, d = self._trajectory
         # s, a, r, s1, d = nested_utils.collate_nested(torch.stack, self._trajectory)
         # TODO: save the last transition there  is a bug where the mask is not applied propery
         # m = (torch.logical_not(d) * torch.ones_like(d)).roll(1, dims=(0,))
-        return [nested_utils.map_nested(lambda x: x.unsqueeze(0), (s, a, r, s1, d))]
+        return list(nested_utils.unbatch_nested(lambda x: x.unsqueeze(1), (s[:-1], a[:-1], target), target.shape[0]))
 
     async def _async_make_replay(self) -> List[NestedTensor]:
         return self._make_replay()
@@ -107,8 +112,7 @@ class SACActorRemote(agents.core.Actor):
 class SACLearner(agents.core.Learner):
     def __init__(self,
                  model: ModelLike,
-                 critic: ModelLike,
-                 target_actor: ModelLike,
+                 # critic: ModelLike,
                  replay_buffer: ReplayBufferLike,
                  critic_optimizer: torch.optim.Optimizer,
                  actor_optimizer: torch.optim.Optimizer,
@@ -124,7 +128,7 @@ class SACLearner(agents.core.Learner):
         super().__init__()
 
         self._model = model
-        self._critic = critic
+        self._critic = self._model.critic
         self._replay_buffer = replay_buffer
         self._critic_optimizer = critic_optimizer
         self._actor_optimizer = actor_optimizer
@@ -142,7 +146,7 @@ class SACLearner(agents.core.Learner):
         self._step_counter = 0
         self._device = None
         self._rb_cursor = None
-        self._target_actor = copy.deepcopy(target_actor)
+        # self._target_actor = copy.deepcopy(self._model.wrapped)
         # the critic is local citizen hence share memory
         # self._critic.share_memory()
 
@@ -188,8 +192,8 @@ class SACLearner(agents.core.Learner):
             for param, target_param in zip(self._critic.critic.parameters(), self._critic.target_critic.parameters()):
                 target_param.data.copy_(self._tau * param.data + (1 - self._tau) * target_param.data)
 
-            for param, target_param in zip(self._model.parameters(), self._target_actor.parameters()):
-                target_param.data.copy_(self._tau * param.data + (1 - self._tau) * target_param.data)
+            # for param, target_param in zip(self._model.parameters(), self._target_actor.parameters()):
+            #    target_param.data.copy_(self._tau * param.data + (1 - self._tau) * target_param.data)
 
         self._step_counter += 1
 
@@ -202,7 +206,7 @@ class SACLearner(agents.core.Learner):
         return metrics
 
     def _train_critic(self, batch: NestedTensor) -> Dict[str, float]:
-        loss, metrics = critic_loss(self._target_actor, self._critic, batch)
+        loss, metrics = critic_loss(self._model.wrapped.actor, self._critic, batch)
         # Do not move this after the loss because actor loss generates a gradient for the critic
         self._critic_optimizer.zero_grad(set_to_none=True)
         loss.backward()
@@ -239,14 +243,14 @@ def clip_dqda(m, grad_input, grad_output):
 
 
 def critic_loss(actor, critic, batch, gamma=0.99):
-    s, a, r, s1, d = batch
+    s, a, next_q_value = batch
 
-    with torch.no_grad():
-        next_state_actions, next_state_log_pi, _ = actor.policy(s1)
-        qf1_next_target, qf2_next_target = critic.target_critic(s1, next_state_actions)
-        min_qf_next_target = torch.min(qf1_next_target, qf2_next_target) - critic.alpha * next_state_log_pi
-        #next_q_value = r + d.logical_not() * gamma * min_qf_next_target
-        next_q_value = rlego.discounted_returns(r, torch.logical_not(d) * gamma, min_qf_next_target)
+    # with torch.no_grad():
+    #    next_state_actions, next_state_log_pi, _ = actor.policy(s1)
+    #    qf1_next_target, qf2_next_target = critic.target_critic(s1, next_state_actions)
+    #    min_qf_next_target = torch.min(qf1_next_target, qf2_next_target) - critic.alpha * next_state_log_pi
+    #    next_q_value = r + d.logical_not() * gamma * min_qf_next_target
+    #    # next_q_value = rlego.discounted_returns(r, torch.logical_not(d) * gamma, min_qf_next_target)
     qf1, qf2 = critic(s, a)
 
     qf1_loss = (next_q_value - qf1).pow(2).mean()
@@ -257,7 +261,7 @@ def critic_loss(actor, critic, batch, gamma=0.99):
 
 
 def actor_loss(actor, critic, batch):
-    s, a, r, s1, d = batch
+    s, a, _ = batch
     pi, log_pi, std = actor.policy(s)
     qf1_pi, qf2_pi = critic(s, pi)
     min_qf_pi = torch.min(qf1_pi, qf2_pi)
@@ -266,7 +270,7 @@ def actor_loss(actor, critic, batch):
 
 
 def alpha_loss(actor, critic, batch):
-    s, a, r, s1, d = batch
+    s, a, r = batch
     with torch.no_grad():
         _, log_pi, _ = actor.policy(s)
     alpha_loss = - (critic.log_alpha * (log_pi + critic.target_entropy)).mean()
