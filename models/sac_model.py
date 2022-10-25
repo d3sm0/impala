@@ -77,12 +77,9 @@ class SoftQNetwork(nn.Module):
         super().__init__()
         self.body = nn.Sequential(
             init_(nn.Linear(np.array(observation_space).prod() + np.prod(action_space), 256)),
-            nn.GELU(),
+            nn.ReLU(),
             init_(nn.Linear(256, 256)),
-            nn.GELU(),
-            #nn.LayerNorm(256),
-            init_(nn.Linear(256, 256)),
-            nn.GELU(),
+            nn.ReLU(),
             init_(nn.Linear(256, 1))
         )
 
@@ -98,12 +95,9 @@ class ActorBody(nn.Module):
 
         self.body = nn.Sequential(
             init_(nn.Linear(np.array(observation_space).prod(), 256)),
-            nn.GELU(),
+            nn.ReLU(),
             init_(nn.Linear(256, 256)),
-            nn.GELU(),
-            #nn.LayerNorm(256),
-            init_(nn.Linear(256, 256)),
-            nn.GELU(),
+            nn.ReLU(),
         )
 
     def forward(self, x):
@@ -203,6 +197,37 @@ class SoftActor(RemotableModel):
             x_t = mu + std * torch.randn_like(std) * eps
             action = torch.tanh(x_t) * self.actor.action_scale + self.actor.action_bias
         return action.cpu()
+
+    def policy(self, s):
+        mu, log_std = self.actor(s)
+        # log_std = torch.ones_like(log_std) * math.log(0.1)
+        # log_std = log_std + (target_log_std - log_std).detach()
+        return to_action(mu, log_std)
+
+
+class SoftActorCritic(RemotableModel):
+    def __init__(self, observation_space, action_space, action_scale=1., action_bias=0., alpha=1.):
+        super(SoftActorCritic, self).__init__()
+        self.actor = Actor(observation_space, action_space, action_scale, action_bias)
+        self.critic = SoftCritic(observation_space, action_space, alpha=alpha)
+
+    def forward(self, x):
+        return self.actor.forward(x)
+
+    # This should probably match number of environments someohow
+    @remote.remote_method(batch_size=128)
+    def act(self, obs: torch.Tensor, eps: torch.Tensor = 0.) -> torch.Tensor:
+        device = next(self.parameters()).device
+        eps = eps.to(device)
+        with torch.no_grad():
+            obs = obs.to(device)
+            mu, log_std = self.forward(obs)
+            std = log_std.exp()
+            x_t = mu + std * torch.randn_like(std) * eps
+            action = torch.tanh(x_t) * self.actor.action_scale + self.actor.action_bias
+            target_value = self.critic.target(obs, action)
+            target_value = torch.min(target_value[0], target_value[1])
+        return action.cpu(), target_value.cpu()
 
     def policy(self, s):
         mu, log_std = self.actor(s)
