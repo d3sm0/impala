@@ -191,9 +191,9 @@ class SACLearner(agents.core.Learner):
             for param, target_param in zip(self._model.parameters(), self._target_actor.parameters()):
                 target_param.data.copy_(self._tau * param.data + (1 - self._tau) * target_param.data)
 
-        if self._sampler_future is not None:
-            self._sampler_future.wait()
-        self._sampler_future = self._replay_buffer.async_update(keys, next_priorities)
+        # if self._sampler_future is not None:
+        #     self._sampler_future.wait()
+        # self._sampler_future = self._replay_buffer.async_update(keys, next_priorities)
 
         self._step_counter += 1
 
