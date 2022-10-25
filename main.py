@@ -38,7 +38,14 @@ logger.setLevel(logging.DEBUG)
 
 @hydra.main(version_base=None, config_path="./conf", config_name="config")
 def main(cfg):
-    logger.info(hydra_utils.config_to_json(cfg))
+    # Meh
+    if "SLURM_JOB_ID" in os.environ.keys() or cfg.distributed.host == "mila":
+        cfg = omegaconf.OmegaConf.merge(cfg, omegaconf.OmegaConf.load("conf/deploy/mila.yaml"))
+    else:
+        cfg = omegaconf.OmegaConf.merge(cfg, omegaconf.OmegaConf.load("conf/deploy/local.yaml"))
+    omegaconf.OmegaConf.resolve(cfg)
+
+    logger.info(cfg)
 
     torch.manual_seed(cfg.training.seed)
     torch.cuda.manual_seed_all(cfg.training.seed)
@@ -46,12 +53,6 @@ def main(cfg):
     torch.backends.cudnn.deterministic = True
     np.random.seed(cfg.training.seed)
     random.seed(cfg.training.seed)
-
-    # Meh
-    if "SLURM_JOB_ID" in os.environ.keys() or cfg.distributed.host == "mila":
-        cfg = omegaconf.OmegaConf.merge(cfg, omegaconf.OmegaConf.load("conf/deploy/mila.yaml"))
-    else:
-        cfg = omegaconf.OmegaConf.merge(cfg, omegaconf.OmegaConf.load("conf/deploy/local.yaml"))
 
     writer = experiment_buddy.deploy(host=cfg.distributed.host,
                                      disabled=sys.gettrace() is not None,

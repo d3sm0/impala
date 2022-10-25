@@ -12,17 +12,16 @@ hydra:
 
 distributed:
   server_addr: "127.0.0.1"
-  master_port: { env: MASTER_PORT, default: 4444}
   m_server_name: "m_server"
-  m_port: ${distributed.master_port}1
+  m_port: 4411
   m_server_addr: ${distributed.server_addr}:${distributed.m_port}
 
   r_server_name: "r_server"
-  r_port: ${distributed.master_port}2
+  r_port: 4412
   r_server_addr: ${distributed.server_addr}:${distributed.r_port}
 
   c_server_name: "c_server"
-  c_port: ${distributed.master_port}3
+  c_port: 4413
   c_server_addr: ${distributed.server_addr}:${distributed.c_port}
 
   train_device: "cuda:0"
