@@ -151,13 +151,22 @@ def layer_init_truncated(layer, scale=1.):
     with torch.no_grad():
         fan_in = layer_fan_in(layer)
         distribution_stddev = np.asarray(.87962566103423978, dtype=np.float32)
-        std = np.sqrt(scale) / (distribution_stddev * np.sqrt(fan_in))
+        std = np.sqrt(scale / fan_in) / distribution_stddev
         torch.nn.init.trunc_normal_(layer.weight, std=std)
         torch.nn.init.constant_(layer.bias, 0.)
     return layer
 
 
-def layer_init_uniform(layer, scale: float = 1.):
+def layer_init_uniform(layer, scale: float = 0.33):
+    with torch.no_grad():
+        fan_in = layer_fan_in(layer)
+        scale = np.sqrt(3 / fan_in) * scale
+        torch.nn.init.uniform_(layer.weight, -scale, scale)
+        torch.nn.init.constant_(layer.bias, 0.)
+    return layer
+
+
+def variance_scaling_uniform(layer, scale: float = 1.):
     with torch.no_grad():
         fan_in = layer_fan_in(layer)
         scale = np.sqrt(3 * scale / fan_in)

@@ -4,5 +4,7 @@ distributed:
   infer_device: "cuda:0"
   host: "mila"
 training:
-  num_workers: 14
-  num_rollouts: 28
+  num_workers: 8
+  num_rollouts: 16
+  steps_per_epoch: 1000
+

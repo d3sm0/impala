@@ -4,24 +4,32 @@
 # LICENSE file in the root directory of this source tree.
 import logging
 import os
+import random
 import sys
 
 import experiment_buddy
 import hydra
+import moolib
+import numpy as np
+
+moolib.set_log_level("debug")
 import omegaconf
 import rlmeta.utils.hydra_utils as hydra_utils
 import torch
 import torch.backends.cudnn
 import torch.multiprocessing as mp
-import wandb
 from rlmeta.core.controller import Controller
 from rlmeta.core.loop import LoopList
 
 import envs
 import utils
+import wandb
 from agents.distributed_agent import DistributedAgent
-from agents.impala.builder import ImpalaBuilder
-from agents.ppo.builder import PPOBuilder
+from agents.sac.builder import SACBuilder
+
+logger = logging.getLogger("root")
+logger.addHandler(logging.StreamHandler())
+logger.setLevel(logging.DEBUG)
 
 
 # from agents.ppo.builder import PPOBuilder
@@ -30,23 +38,34 @@ from agents.ppo.builder import PPOBuilder
 
 @hydra.main(version_base=None, config_path="./conf", config_name="config")
 def main(cfg):
-    logging.info(hydra_utils.config_to_json(cfg))
+    # Meh
+    if "SLURM_JOB_ID" in os.environ.keys():
+        cfg = omegaconf.OmegaConf.merge(cfg, omegaconf.OmegaConf.load("conf/deploy/mila.yaml"))
+        master_port = random.randint(4440, 4460)
+        omegaconf.OmegaConf.update(cfg, "distributed", {
+            "r_port": master_port + 1,
+            "m_port": master_port + 2,
+            "c_port": master_port + 3,
+
+        }, merge=True)
+    else:
+        cfg = omegaconf.OmegaConf.merge(cfg, omegaconf.OmegaConf.load("conf/deploy/local.yaml"))
+    omegaconf.OmegaConf.resolve(cfg)
+
+    logger.info(cfg)
 
     torch.manual_seed(cfg.training.seed)
     torch.cuda.manual_seed_all(cfg.training.seed)
     torch.backends.cudnn.benchmark = True
     torch.backends.cudnn.deterministic = True
-
-    # Meh
-    if "SLURM_JOB_ID" in os.environ.keys() or cfg.distributed.host == "mila":
-        cfg = omegaconf.OmegaConf.merge(cfg, omegaconf.OmegaConf.load("conf/deploy/mila.yaml"))
-    else:
-        cfg = omegaconf.OmegaConf.merge(cfg, omegaconf.OmegaConf.load("conf/deploy/local.yaml"))
+    np.random.seed(cfg.training.seed)
+    random.seed(cfg.training.seed)
 
     writer = experiment_buddy.deploy(host=cfg.distributed.host,
                                      disabled=sys.gettrace() is not None,
                                      wandb_kwargs={"project": "impala",
                                                    "settings": wandb.Settings(start_method="thread"),
+                                                   # "mode": "disabled",
                                                    "config": omegaconf.OmegaConf.to_container(
                                                        cfg, resolve=True),
                                                    # "tags": [cfg.distributed.host,
@@ -56,8 +75,9 @@ def main(cfg):
     # writer = utils.Writer()
     # builder = ApexDQNBuilder(cfg)
     # builder = ApexDistributionalBuilder(cfg)
-    builder = PPOBuilder(cfg)
+    # builder = PPOBuilder(cfg)
     # builder = ImpalaBuilder(cfg)
+    builder = SACBuilder(cfg)
 
     env_factory = envs.EnvFactory(cfg.task.env_id, library_str=cfg.task.benchmark)
     # TODO: make spec here
@@ -74,8 +94,7 @@ def main(cfg):
 
     e_agent_fac = builder.make_actor(e_model, deterministic=True)
     evaluate_loop = utils.create_evaluation_loops(cfg, envs.EnvFactory(cfg.task.env_id, library_str=cfg.task.benchmark,
-                                                                       train=False), e_agent_fac,
-                                                  e_ctrl)
+                                                                       train=False), e_agent_fac, e_ctrl)
 
     loops = LoopList([train_loop, evaluate_loop])
 
@@ -89,7 +108,15 @@ def main(cfg):
     agent.connect()
     for epoch in range(cfg.training.num_epochs):
         total_samples = agent.train(cfg.training.steps_per_epoch)
-        agent.eval(cfg.evaluation.num_rollouts, keep_training_loops=True)
+        agent.eval(cfg.evaluation.num_rollouts, keep_training_loops=False)
+        if epoch % 100 == 0 or total_samples > cfg.task.total_frames:
+            torch.save(builder.learner_model, os.path.join(writer.run.dir, f"model-{epoch}.pt"))
+            writer.run.save(
+                os.path.join(writer.run.dir, f"model-{epoch}.pt"),
+            )
+            writer.run.config.update({
+                "latest": f"model-{epoch}.pt"
+            }, allow_val_change=True)
         if total_samples > cfg.task.total_frames:
             break
     loops.terminate()
