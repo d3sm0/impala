@@ -5,7 +5,7 @@ import torch
 from rlmeta.agents.agent import AgentFactory
 from rlmeta.core.model import ModelLike
 from rlmeta.core.replay_buffer import ReplayBufferLike
-from rlmeta.samplers import PrioritizedSampler
+from rlmeta.samplers import PrioritizedSampler,UniformSampler
 from rlmeta.storage import CircularBuffer
 
 import agents.core
@@ -28,7 +28,7 @@ class SACBuilder(agents.core.Builder):
         self._actor_model = None
 
     def make_replay(self):
-        sampler = PrioritizedSampler(priority_exponent=0.6)
+        sampler = UniformSampler()
         sampler.reset(self.cfg.training.seed)
         return rlmeta.core.replay_buffer.ReplayBuffer(
             CircularBuffer(self.cfg.agent.replay_buffer_size, collate_fn=torch.cat),
