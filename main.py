@@ -11,17 +11,16 @@ import experiment_buddy
 import hydra
 import moolib
 import numpy as np
-
 import omegaconf
 import torch
 import torch.backends.cudnn
 import torch.multiprocessing as mp
+import wandb
 from rlmeta.core.controller import Controller
 from rlmeta.core.loop import LoopList
 
 import envs
 import utils
-import wandb
 from agents.distributed_agent import DistributedAgent
 from agents.sac.builder import SACBuilder
 
@@ -60,17 +59,19 @@ def main(cfg):
     np.random.seed(cfg.training.seed)
     random.seed(cfg.training.seed)
 
-    writer = experiment_buddy.deploy(host=cfg.distributed.host,
-                                     disabled=sys.gettrace() is not None,
-                                     wandb_kwargs={"project": "impala",
-                                                   "settings": wandb.Settings(start_method="thread"),
+    writer = experiment_buddy.deploy(host=sys.gettrace() is not None,
+                                     debug=False,  # sys.gettrace() is not None,
+                                     wandb_kwargs={"settings": wandb.Settings(start_method="thread"),
+                                                   "config": omegaconf.OmegaConf.to_container(cfg, resolve=True),
                                                    # "mode": "disabled",
-                                                   "config": omegaconf.OmegaConf.to_container(
-                                                       cfg, resolve=True),
                                                    # "tags": [cfg.distributed.host,
                                                    #          cfg.task.benchmark]
                                                    },
-                                     extra_modules=["cuda/11.1/cudnn/8.0", "python/3.7", "gcc", "libffi"])
+                                     extra_modules=["cuda/11.1/cudnn/8.0", "python/3.7", "gcc", "libffi"],
+                                     proc_num=2,
+                                     sweep_definition="sweep.yaml",
+                                     tag_experiment=False,
+                                     )
     # writer = utils.Writer()
     # builder = ApexDQNBuilder(cfg)
     # builder = ApexDistributionalBuilder(cfg)
