@@ -5,7 +5,6 @@
 import time
 from typing import Dict, List, Optional
 
-import moolib
 import rlego
 import rlmeta.utils.nested_utils as nested_utils
 import torch
@@ -32,7 +31,8 @@ class PPOActorRemote(Actor):
         self._deterministic_policy = torch.tensor([deterministic_policy])
         self._model = model
         self._replay_buffer = replay_buffer
-        self._trajectory = moolib.Batcher(rollout_length, dim=0, device="cpu")
+        self._rollout_length = rollout_length
+        self._trajectory = []
         self._last_transition = None
 
     async def async_act(self, timestep: TimeStep) -> Action:
@@ -44,39 +44,34 @@ class PPOActorRemote(Actor):
     async def async_observe_init(self, timestep: TimeStep) -> None:
         if self._replay_buffer is None:
             return
-        obs, _, _, _ = timestep
-        self._last_transition = obs.clone()
+        self._last_transition = timestep
 
     async def async_observe(self, action: Action,
                             next_timestep: TimeStep) -> None:
         if self._replay_buffer is None:
             return
-        obs = self._last_transition
+        obs = self._last_transition.observation
         act, action_info = action
         next_obs, reward, done, _ = next_timestep
-        self._trajectory.stack((obs, act, reward, done, action_info["logpi"], action_info["v"]))
-        self._last_transition = next_obs.clone()
+        self._trajectory.append((obs, act, reward, done, action_info["logpi"], action_info["v"]))
+        self._last_transition = next_timestep
 
     async def async_update(self) -> None:
-        if self._replay_buffer is not None:
-            if not self._trajectory.empty():
-                replay = await self._async_make_replay()
-                await self._async_send_replay(replay)
+        if self._replay_buffer is None or not self._last_transition.done:
+            return
+        replay = await self._async_make_replay()
+        await self._replay_buffer.async_extend(replay)
+        self._trajectory.clear()
 
     def _make_replay(self) -> List[NestedTensor]:
-        s, a, r, d, pi_ref, values = self._trajectory.get()
-        s, a, r, d, pi_ref = nested_utils.map_nested(lambda x: x.squeeze(-1)[:-1], (s, a, r, d, pi_ref))
-        not_done = torch.logical_not(d)
-        mask = torch.ones_like(not_done) * not_done.roll(1, dims=(0,))
-        discount_t = (mask * not_done) * self._gamma
-        target_t = rlego.lambda_returns(r, discount_t, values.squeeze(-1)[1:], self._lambda)  # noqa
+        *batch, values = nested_utils.collate_nested(torch.stack, self._trajectory)
+        s, a, r, d, pi_ref = nested_utils.map_nested(lambda x: x.squeeze(-1)[:-1], batch)
+        discount_t = torch.logical_not(d) * self._gamma
+        target_t = rlego.lambda_returns(r, discount_t, values.squeeze(dim=-1)[1:], self._lambda)  # noqa
         return nested_utils.unbatch_nested(lambda x: x.unsqueeze(1), (s, a, target_t, pi_ref), target_t.shape[0])
 
     async def _async_make_replay(self) -> List[NestedTensor]:
         return self._make_replay()
-
-    async def _async_send_replay(self, replay: List[NestedTensor]) -> None:
-        await self._replay_buffer.async_extend(replay)
 
 
 class PPOLearner(Learner):

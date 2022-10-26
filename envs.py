@@ -6,7 +6,6 @@ import numpy as np
 import procgen
 import rlmeta.envs.env
 import torch
-from gym.utils.step_api_compatibility import convert_to_terminated_truncated_step_api
 from rlmeta.core.types import TimeStep, Action
 from rlmeta.envs.gym_wrappers import GymWrapper
 
@@ -17,17 +16,19 @@ class EnvPool(GymWrapper):
     def step(self, action: Action) -> TimeStep:
         # The new gym api carries terminal. We don't care for now, as evnpool, skip one step which we mask later
         # in the env
-        s, r, d, info = self.env.step(action.action.cpu().numpy())
+        s, r, d, terminated, info = self.env.step(action.action.cpu().numpy())
         r = torch.tensor(r)
         d = torch.tensor(d, dtype=torch.bool)
+        info["terminated"] = torch.tensor(terminated, dtype=torch.bool)
         return TimeStep(observation=self._observation_fn(s), reward=r, done=d, info=info)
 
     def reset(self, *args, **kwargs) -> TimeStep:
-        s = self.env.reset(*args, **kwargs)
-        info = {}
-        if isinstance(s, tuple):
-            s, info = s
+        s, info = self.env.reset(*args, **kwargs)
         return TimeStep(observation=self._observation_fn(s), reward=0, done=False, info=info)
+
+
+def control_obs_fn(obs):
+    return torch.from_numpy(obs).to(torch.float32)
 
 
 def squeze_obs(obs):
@@ -40,14 +41,20 @@ class EnvSpec(NamedTuple):
 
 
 class EnvFactory(rlmeta.envs.env.EnvFactory):
-    def __init__(self, task_id: str, library_str: str = 'atari', train: bool = True):
+    def __init__(self, task_id: str, library_str: str = 'atari', train: bool = True, seed: int = 33):
         self.task_id = task_id
         self.library = library_str
         self.train = train
+        self.seed = seed
+        if library_str == 'mujoco':
+            self.observation_fn = control_obs_fn
+        else:
+            self.observation_fn = squeze_obs
 
     def __call__(self, seed) -> EnvPool:
         make_fn = _libraries[self.library]
-        return EnvPool(make_fn(self.task_id, seed=seed, train=self.train), observation_fn=squeze_obs)
+        return EnvPool(make_fn(self.task_id, seed=seed % self.seed, train=self.train),
+                       observation_fn=self.observation_fn)
 
     def get_spec(self):
         env = self.__call__(0)
@@ -59,12 +66,15 @@ class EnvFactory(rlmeta.envs.env.EnvFactory):
 class ProcWrap(gym.Wrapper):
     render_mode = "rgb_array"
 
-    def __init__(self, env: procgen.ProcgenEnv):
+    def __init__(self, env: procgen.ProcgenEnv, train: bool = True):
         super().__init__(env)
-        self.observation_space = env.observation_space['rgb']
+        observation_space = env.observation_space['rgb']
+        h, w, c = observation_space.shape
+        self.observation_space = gym.spaces.Box(low=0, high=255, shape=(c, h, w), dtype=np.uint8)
         self.reward_range = (-10, 10)
-        self.is_vector_env = True
-        self.num_envs = env.num_envs
+        self.done = None
+        if not train:
+            self._reward_fn = lambda x: x
 
     def step(self, action):
         obs, rew, done, info = self.env.step(action)
@@ -75,44 +85,24 @@ class ProcWrap(gym.Wrapper):
         return
 
     def reset(self, **kwargs):
-        return self._observation_fn(self.env.reset(**kwargs))
+        if self.done is not None and not self.done:
+            print("WARNING: reseting env before done")
+        obs = self._observation_fn(self.env.reset(**kwargs))
+        return obs, {}
 
     def _observation_fn(self, obs):
         return obs['rgb'].transpose(0, 3, 1, 2).squeeze(0)
 
     def _reward_fn(self, r):
-        return np.clip(r, -10, 10)
+        return np.clip(r, *self.reward_range)
 
 
-class AtariWrap(gym.Wrapper):
-    def __init__(self, env):
-        super(AtariWrap, self).__init__(env)
-
-    def step(self, action):
-        step_returns = self.env.step(action)
-        return convert_to_terminated_truncated_step_api(step_returns, True)
-
-
-class ControlWrap(gym.wrappers.TransformObservation):
-
-    def step(self, action):
-        s, r, d, info = self.env.step(action[None, :])
-        return self.f(s), r, d, info
-
-    def reset(self):
-        return self.f(self.env.reset())
-
-
-def make_procgen(task_id='starpilot', num_envs=1, seed=33):
+def make_procgen(task_id='starpilot', num_envs=1, seed=33, train: bool = True):
     env = procgen.ProcgenEnv(num_envs=num_envs, env_name=task_id, rand_seed=seed, num_levels=0, start_level=0,
                              distribution_mode="easy")
 
-    env = ProcWrap(env)
-    env = gym.wrappers.StepAPICompatibility(env, True)
-    # env = gym.wrappers.NormalizeReward(env)
-    env = gym.wrappers.RecordEpisodeStatistics(env)
-    # envs = gym.wrappers.TransformObservation(envs, lambda x: (x['rgb']).transpose(0, 3, 1, 2))
-    # envs = gym.wrappers.TransformReward(envs, lambda reward: np.clip(reward, -10, 10))
+    env = ProcWrap(env, train)
+
     return env
 
 
@@ -135,7 +125,6 @@ def make_atari(task_id, batch_size=1, seed=33, async_envs=False, train: bool = T
 def make_mujoco(task_id, batch_size=1, seed=33, train: bool = True):
     num_envs = batch_size
     env = envpool.make_gym(task_id, batch_size=batch_size, num_envs=num_envs, seed=seed)
-    env = ControlWrap(env, f=lambda x: x.astype(np.float32))
     return env
 
 

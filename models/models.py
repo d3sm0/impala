@@ -62,7 +62,7 @@ class AtariActorCritic(nn.Module):
     def __init__(self, observation_space: Tuple[int, ...], action_space: int = 6, h_dim: int = 256):
         super(AtariActorCritic, self).__init__()
         # TODO: verify init and layer norm
-        self.body = models.common.ImpalaCNNLarge(observation_space)
+        self.body = models.common.AtariBody(observation_space)
         self.projection = nn.Sequential(nn.LayerNorm(self.body.output_dim),
                                         models.common.layer_init_truncated(nn.Linear(self.body.output_dim, h_dim)),
                                         nn.GELU())

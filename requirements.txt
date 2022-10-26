@@ -8,3 +8,4 @@ hydra-core
 -e git+https://github.com/d3sm0/experiment_buddy#egg=experiment_buddy
 envpool
 procgen
+dm_control

@@ -2,7 +2,6 @@ import time
 from typing import Optional, Tuple, List, Dict
 
 # import functorch
-import moolib
 import rlego
 import torch
 from rlmeta.core.model import ModelLike
@@ -24,8 +23,9 @@ class ApexActor(Actor):
         self._replay_buffer = replay_buffer
         self._eps = torch.tensor((eps,), dtype=torch.float32)
         self._n_step = n_step
-        self._trajectory = moolib.Batcher(rollout_length, dim=0, device="cpu")
-        self._last_observation = None
+        self._trajectory = []
+        self._rollout_length = rollout_length
+        self._last_transition = None
         self._gamma = gamma
 
     async def async_act(self, timestep: TimeStep) -> Action:
@@ -35,36 +35,35 @@ class ApexActor(Actor):
     async def async_observe_init(self, timestep: TimeStep) -> None:
         if self._replay_buffer is None:
             return
-        self._last_observation = timestep.observation
+        self._last_transition = timestep
 
     async def async_observe(self, action: Action,
                             next_timestep: TimeStep) -> None:
         if self._replay_buffer is None:
             return
-        obs = self._last_observation
+        obs = self._last_transition.observation
         action, action_info = action
         next_obs, reward, done, _ = next_timestep
-        # TODO: include discount in step
-        self._trajectory.stack((obs, action, reward, done, action_info["q"], action_info["v"]))
-        self._last_observation = next_obs
+        self._trajectory.append((obs, action, reward, done, action_info["q"], action_info["v"]))
+        self._last_transition = next_timestep
 
     async def async_update(self) -> None:
-        if self._replay_buffer is None or self._trajectory.empty():
+        if self._replay_buffer is None or not self._last_transition.done:
             return
-        replay, priorities = self._make_replay()
+        replay, priorities = await self._async_make_replay()
         await self._replay_buffer.async_extend(replay, priorities)
+        # TODO: can you clearn the list here?
+        self._trajectory.clear()
 
-    def _make_replay(self) -> Tuple[List[NestedTensor], torch.Tensor]:
-        # TODO : this very likely is buggy make a test for it
-        s_tm1, a_t, r_t, d_t, q_pi_t, q_star_t = nested_utils.map_nested(lambda x: x.squeeze(dim=-1), self._trajectory.get())
+    async def _async_make_replay(self) -> Tuple[List[NestedTensor], torch.Tensor]:
+        s_tm1, *batch = nested_utils.collate_nested(torch.stack, self._trajectory)
+        a_t, r_t, d_t, q_pi_t, q_star_t = nested_utils.map_nested(lambda x: x.squeeze(dim=1), batch)
+
         not_done = torch.logical_not(d_t)
-        # we need this mask because the trajectory does not reset on terminal, thus we might have terminal states in sequencee
-        mask = not_done.roll(1, dims=0)
         discount_t = not_done * self._gamma
-        # replace the last element with q_star
         target = rlego.n_step_bootstrapped_returns(r_t[:-1], discount_t[:-1], q_star_t[1:], n=self._n_step)
-        priorities = (target - q_pi_t[:-1].squeeze(dim=-1)).abs()
-        return nested_utils.unbatch_nested(lambda x: x.unsqueeze(1), (s_tm1, a_t, target, mask),
+        priorities = (target - q_pi_t[:-1]).abs()
+        return nested_utils.unbatch_nested(lambda x: x.unsqueeze(1), (s_tm1[:-1], a_t[:-1], target),
                                            target.shape[0]), priorities
 
 
@@ -72,19 +71,19 @@ class ApexDistributionalActor(ApexActor):
     def _make_replay(self) -> Tuple[List[NestedTensor], torch.Tensor]:
         # TODO: we should use vmap here but is not supported by the cluster
         # if so ApexActor and ApexDistributional should be merged
-        s_tm1, a_t, r_t, d_t, q_pi_t, q_star_t = self._trajectory.get()
-        s_tm1, a_t, r_t, d_t = nested_utils.map_nested(lambda x: x.squeeze(-1)[:-1], (s_tm1, a_t, r_t, d_t))
+        s_tm1, *batch = nested_utils.collate_nested(torch.stack, self._trajectory)
+        a_t, r_t, d_t, q_pi_t, q_star_t = nested_utils.map_nested(lambda x: x.squeeze(dim=1), batch)
         not_done = torch.logical_not(d_t)
-        discount_t = (not_done.roll(1, dims=0) * torch.ones_like(not_done)) * self._gamma
-        # replace the last element with q_star
+        discount_t = not_done * self._gamma
         n, k = q_star_t.shape
         targets = []
         for idx in range(k):
-            target = rlego.n_step_bootstrapped_returns(r_t, discount_t, q_star_t[1:, idx], n=self._n_step)
+            target = rlego.n_step_bootstrapped_returns(r_t[:-1], discount_t[:-1], q_star_t[1:, idx], n=self._n_step)
             targets.append(target)
         target = torch.stack(targets, dim=1)
         priorities = (target.mean(1) - q_pi_t[:-1].squeeze(dim=-1)).abs()
-        return nested_utils.unbatch_nested(lambda x: x.unsqueeze(1), (s_tm1, a_t, target), target.shape[0]), priorities
+        return nested_utils.unbatch_nested(lambda x: x.unsqueeze(1), (s_tm1[:-1], a_t[:-1], target),
+                                           target.shape[0]), priorities
 
 
 class ApexLearner(Learner):
@@ -160,14 +159,14 @@ class ApexLearner(Learner):
     def _train_step(self, keys: torch.Tensor, batch: NestedTensor,
                     probabilities: torch.Tensor) -> Dict[str, float]:
         self._optimizer.zero_grad()
-        obs, action, target, mask = batch
+        obs, action, target = batch
         q = self._model(obs)
         q = q.gather(1, action.unsqueeze(-1)).squeeze(-1)
 
         probabilities = probabilities.to(dtype=q.dtype, device=self._device)
         weight = probabilities.pow(-self._importance_sampling_exponent)
         weight.div_(weight.max())
-        err = (target - q).mul(mask)
+        err = (target - q)
         loss = 0.5 * (err.pow(2) * weight).mean()
         loss.backward()
         grad_norm = torch.nn.utils.clip_grad_norm_(self._model.parameters(),

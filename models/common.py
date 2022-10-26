@@ -80,7 +80,7 @@ class ImpalaCNNLarge(nn.Module):
 
     @property
     def output_dim(self):
-        return 3872
+        return 2048
 
 
 class ImpalaCNNSmall(nn.Module):
@@ -108,8 +108,9 @@ class ImpalaCNNSmall(nn.Module):
 class AtariBody(nn.Module):
     def __init__(self, obs_dim: Tuple[int, ...]):
         super().__init__()
+        c, h, w = obs_dim
         self.body = nn.Sequential(
-            layer_init_truncated(nn.Conv2d(4, 32, 8, stride=4)),
+            layer_init_truncated(nn.Conv2d(c, 32, 8, stride=4)),
             nn.ReLU(),
             layer_init_truncated(nn.Conv2d(32, 64, 4, stride=2)),
             nn.ReLU(),
@@ -122,7 +123,7 @@ class AtariBody(nn.Module):
 
     @property
     def output_dim(self):
-        return 7 * 7 * 64
+        return 1024
 
 
 class LinearBody(nn.Module):

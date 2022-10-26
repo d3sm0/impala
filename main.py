@@ -16,13 +16,14 @@ import torch
 import torch.backends.cudnn
 import torch.multiprocessing as mp
 import wandb
-from rlmeta.core.controller import Controller
+from rlmeta.core.controller import Controller, Phase
 from rlmeta.core.loop import LoopList
 
 import envs
 import utils
 from agents.distributed_agent import DistributedAgent
-from agents.dqn.builder import ApexDQNBuilder
+from agents.dqn.builder import ApexDQNBuilder, ApexDistributionalBuilder
+from agents.ppo.builder import PPOBuilder
 
 moolib.set_log_level("debug")
 logger = logging.getLogger("root")
@@ -70,16 +71,16 @@ def main(cfg):
                                      extra_modules=["cuda/11.1/cudnn/8.0", "python/3.7", "gcc", "libffi"],
                                      parallel_jobs=1,
                                      # sweep_definition="sweep.yaml",
-                                     tag_experiment=False,
+                                     tag_experiment=True,
                                      )
     # writer = utils.Writer()
-    builder = ApexDQNBuilder(cfg)
+    # builder = ApexDQNBuilder(cfg)
     # builder = ApexDistributionalBuilder(cfg)
-    # builder = PPOBuilder(cfg)
+    builder = PPOBuilder(cfg)
     # builder = ImpalaBuilder(cfg)
     # builder = SACBuilder(cfg)
 
-    env_factory = envs.EnvFactory(cfg.task.env_id, library_str=cfg.task.benchmark)
+    env_factory = envs.EnvFactory(cfg.task.env_id, library_str=cfg.task.benchmark, seed=cfg.training.seed)
     # TODO: make spec here
     train_model = builder.make_network(env_factory.get_spec())
     rb = builder.make_replay()
@@ -93,8 +94,10 @@ def main(cfg):
     e_ctrl, e_model, _ = utils.create_workers(cfg, ctrl, builder.actor_model)
 
     e_agent_fac = builder.make_actor(e_model, deterministic=True)
-    evaluate_loop = utils.create_evaluation_loops(cfg, envs.EnvFactory(cfg.task.env_id, library_str=cfg.task.benchmark,
-                                                                       train=False), e_agent_fac, e_ctrl)
+    evaluate_loop = utils.create_evaluation_loops(cfg, envs.EnvFactory(cfg.task.env_id,
+                                                                       library_str=cfg.task.benchmark,
+                                                                       train=False,
+                                                                       seed=cfg.evaluation.seed), e_agent_fac, e_ctrl)
 
     loops = LoopList([train_loop, evaluate_loop])
 

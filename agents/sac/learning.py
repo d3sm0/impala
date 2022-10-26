@@ -45,10 +45,10 @@ class SACActorRemote(agents.core.Actor):
         act, action_info = action
         next_obs, reward, done, info = next_timestep
         # self._trajectory.append((obs, act, reward, next_obs, done))
-        is_truncated = info['TimeLimit.truncated']
+        is_truncated = info['terminated']
         mask = torch.argwhere(torch.tensor(is_truncated, dtype=torch.bool).to(done.device)).squeeze(1)
         done = done.scatter(0, mask, False)
-        self._trajectory.stack((obs, act, reward, next_obs, done))
+        self._trajectory.cat((obs, act, reward, next_obs, done))
         self._last_transition = next_obs.clone()
 
     async def async_update(self) -> None:

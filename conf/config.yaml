@@ -1,7 +1,7 @@
 defaults:
   - _self_
-  - agent: apex
-  - task: atari
+  - agent: ppo
+  - task: procgen
   - override hydra/hydra_logging: disabled
   - override hydra/job_logging: disabled
 
@@ -30,8 +30,8 @@ distributed:
 
 
 evaluation:
-  num_workers: 4
-  num_rollouts: 8
+  num_workers: 1
+  num_rollouts: 1
   seed: 456
   deterministic_policy: true
   num_episodes: 4
