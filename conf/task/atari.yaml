@@ -1,0 +1,3 @@
+env_id: "Breakout-v5"
+benchmark: "atari"
+total_frames: 100000000 # 10M samples i.e. 40M frames

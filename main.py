@@ -22,7 +22,7 @@ from rlmeta.core.loop import LoopList
 import envs
 import utils
 from agents.distributed_agent import DistributedAgent
-from agents.sac.builder import SACBuilder
+from agents.dqn.builder import ApexDQNBuilder
 
 moolib.set_log_level("debug")
 logger = logging.getLogger("root")
@@ -59,25 +59,25 @@ def main(cfg):
     np.random.seed(cfg.training.seed)
     random.seed(cfg.training.seed)
 
-    writer = experiment_buddy.deploy(host=sys.gettrace() is not None,
-                                     debug=False,  # sys.gettrace() is not None,
+    writer = experiment_buddy.deploy(host=cfg.distributed.host,
+                                     debug=sys.gettrace() is not None,
                                      wandb_kwargs={"settings": wandb.Settings(start_method="thread"),
-                                                   "config": omegaconf.OmegaConf.to_container(cfg, resolve=True),
+                                                   "config": omegaconf.OmegaConf.to_container(cfg),
                                                    # "mode": "disabled",
                                                    # "tags": [cfg.distributed.host,
                                                    #          cfg.task.benchmark]
                                                    },
                                      extra_modules=["cuda/11.1/cudnn/8.0", "python/3.7", "gcc", "libffi"],
-                                     proc_num=2,
-                                     sweep_definition="sweep.yaml",
+                                     parallel_jobs=1,
+                                     # sweep_definition="sweep.yaml",
                                      tag_experiment=False,
                                      )
     # writer = utils.Writer()
-    # builder = ApexDQNBuilder(cfg)
+    builder = ApexDQNBuilder(cfg)
     # builder = ApexDistributionalBuilder(cfg)
     # builder = PPOBuilder(cfg)
     # builder = ImpalaBuilder(cfg)
-    builder = SACBuilder(cfg)
+    # builder = SACBuilder(cfg)
 
     env_factory = envs.EnvFactory(cfg.task.env_id, library_str=cfg.task.benchmark)
     # TODO: make spec here

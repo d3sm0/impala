@@ -1,14 +1,14 @@
+replay_buffer_size: 1000000
+rollout_length: 100
+learning_starts: 50000
+batch_size: 512
+model_push_period: 10
+target_sync_period: 2500
+n_step: 3
 train_eps: 0.4
 eval_eps: 0.01
-replay_buffer_size: 500000
 priority_exponent: 0.6
 importance_sampling_exponent: 0.4
-target_sync_period: 2500
-batch_size: 512
-n_step: 3
-learning_starts: 50000
-model_push_period: 10
-rollout_length: 100
 n_tau_samples: 8  # this is a feature for distributional, no need to create a new config
 
 optimizer:
