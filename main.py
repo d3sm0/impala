@@ -70,7 +70,7 @@ def main(cfg):
                                      extra_modules=["cuda/11.1/cudnn/8.0", "python/3.7", "gcc", "libffi"],
                                      parallel_jobs=1,
                                      # sweep_definition="sweep.yaml",
-                                     tag_experiment=False,
+                                     tag_experiment=True,
                                      )
     # writer = utils.Writer()
     builder = ApexDQNBuilder(cfg)
