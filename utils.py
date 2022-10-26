@@ -21,8 +21,6 @@ from rlmeta.core.server import Server, ServerList
 from rlmeta.core.types import Action, TimeStep
 from rlmeta.envs.env import EnvFactory
 
-from configs.config import Config
-
 TIMEOUT = 240
 
 
@@ -79,7 +77,7 @@ class RecordMetrics(EpisodeCallbacks):
             # self.custom_metrics["sps"] = (self.custom_metrics["l"] / self.custom_metrics["t"])
 
 
-def create_master(cfg: Config, ctrl: Controller, train_model: RemotableModel, rb: ReplayBuffer):
+def create_master(cfg, ctrl: Controller, train_model: RemotableModel, rb: ReplayBuffer):
     assert train_model.training is True
     a_rb = RemoteReplayBuffer(rb, cfg.distributed.r_server_name, cfg.distributed.r_server_addr, timeout=TIMEOUT,
                               prefetch=cfg.training.prefetch)
@@ -89,7 +87,7 @@ def create_master(cfg: Config, ctrl: Controller, train_model: RemotableModel, rb
     return async_model, async_ctrl, a_rb
 
 
-def create_servers(cfg: Config, ctrl: Controller, model: RemotableModel, rb: ReplayBuffer):
+def create_servers(cfg, ctrl: Controller, model: RemotableModel, rb: ReplayBuffer):
     # there is only one master
     model_server = Server(cfg.distributed.m_server_name, cfg.distributed.m_server_addr)
     rb_server = Server(cfg.distributed.r_server_name, cfg.distributed.r_server_addr)
@@ -102,7 +100,7 @@ def create_servers(cfg: Config, ctrl: Controller, model: RemotableModel, rb: Rep
     return servers
 
 
-def create_workers(cfg: Config, ctrl: Controller, infer_model: RemotableModel, rb: Optional[ReplayBuffer] = None):
+def create_workers(cfg, ctrl: Controller, infer_model: RemotableModel, rb: Optional[ReplayBuffer] = None):
     # this actions happens in the worker machine
     infer_model = Remote(infer_model, cfg.distributed.m_server_name, cfg.distributed.m_server_addr, timeout=TIMEOUT)
     train_ctrl = Remote(ctrl, cfg.distributed.c_server_name, cfg.distributed.c_server_addr, timeout=TIMEOUT)
@@ -113,7 +111,7 @@ def create_workers(cfg: Config, ctrl: Controller, infer_model: RemotableModel, r
     return train_ctrl, infer_model, train_rb
 
 
-def create_train_loop(cfg: Config, env_fac: EnvFactory, agent_factory: AgentFactory, train_ctrl: Controller):
+def create_train_loop(cfg, env_fac: EnvFactory, agent_factory: AgentFactory, train_ctrl: Controller):
     train_loop = ParallelLoop(env_fac,
                               agent_factory,
                               train_ctrl,
@@ -127,7 +125,7 @@ def create_train_loop(cfg: Config, env_fac: EnvFactory, agent_factory: AgentFact
     return train_loop
 
 
-def create_evaluation_loops(cfg: Config, env_factory: EnvFactory, agent_factory: AgentFactory,
+def create_evaluation_loops(cfg, env_factory: EnvFactory, agent_factory: AgentFactory,
                             evaluate_ctrl: Controller):
     evaluate_loop = ParallelLoop(env_factory,
                                  agent_factory,
