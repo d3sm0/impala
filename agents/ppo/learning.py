@@ -63,11 +63,10 @@ class PPOActorRemote(Actor):
         await self._replay_buffer.async_extend(replay)
 
     def _make_replay(self) -> List[NestedTensor]:
-        *batch, values = self._trajectory.get()
-        s, a, r, d, pi_ref = nested_utils.map_nested(lambda x: x.squeeze(-1)[:-1], batch)
+        s, a, r, d, pi_ref, v = nested_utils.map_nested(lambda x: x.squeeze(dim=-1), self._trajectory.get())
         discount_t = torch.logical_not(d) * self._gamma
-        target_t = rlego.lambda_returns(r, discount_t, values.squeeze(dim=-1)[1:], self._lambda)  # noqa
-        return nested_utils.unbatch_nested(lambda x: x.unsqueeze(1), (s, a, target_t, pi_ref), target_t.shape[0])
+        target_t = rlego.lambda_returns(r[:-1], discount_t[:-1], values[1:], self._lambda)  # noqa
+        return nested_utils.unbatch_nested(lambda x: x.unsqueeze(1), (s[:-1], a[:-1], target_t, pi_ref[:-1]), target_t.shape[0])
 
     async def _async_make_replay(self) -> List[NestedTensor]:
         return self._make_replay()

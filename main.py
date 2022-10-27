@@ -23,6 +23,7 @@ import envs
 import utils
 from agents.distributed_agent import DistributedAgent
 from agents.dqn.builder import ApexDQNBuilder, ApexDistributionalBuilder
+from agents.impala.builder import ImpalaBuilder
 from agents.ppo.builder import PPOBuilder
 
 moolib.set_log_level("debug")
@@ -76,8 +77,8 @@ def main(cfg):
     # writer = utils.Writer()
     # builder = ApexDQNBuilder(cfg)
     # builder = ApexDistributionalBuilder(cfg)
-    builder = PPOBuilder(cfg)
-    # builder = ImpalaBuilder(cfg)
+    # builder = PPOBuilder(cfg)
+    builder = ImpalaBuilder(cfg)
     # builder = SACBuilder(cfg)
 
     env_factory = envs.EnvFactory(cfg.task.env_id, library_str=cfg.task.benchmark, seed=cfg.training.seed)

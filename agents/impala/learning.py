@@ -40,7 +40,7 @@ class ImpalaActor(Actor):
         self._model = model
         self._replay_buffer = replay_buffer
         self._trajectory = moolib.Batcher(rollout_length, dim=0, device="cpu")
-        self._last_transition = None
+        self._last_transition: Optional[TimeStep] = None
 
     def act(self, timestep: TimeStep) -> Action:
         obs = timestep.observation
@@ -56,17 +56,16 @@ class ImpalaActor(Actor):
     async def async_observe_init(self, timestep: TimeStep) -> None:
         if self._replay_buffer is None:
             return
-        obs, _, _, _ = timestep
-        self._last_transition = obs.clone()
+        self._last_transition = timestep
 
     async def async_observe(self, action: Action,
                             next_timestep: TimeStep) -> None:
         if self._replay_buffer is None:
             return
-        obs = self._last_transition.obeservation
+        obs = self._last_transition.observation
         act, action_info = action
         next_obs, reward, done, _ = next_timestep
-        self._trajectory.append((obs, act, reward, next_obs, done, action_info["logpi"]))
+        self._trajectory.stack((obs, act, reward, done, action_info["logpi"]))
         self._last_transition = next_timestep
 
     async def async_update(self) -> None:
@@ -76,7 +75,7 @@ class ImpalaActor(Actor):
         await self._replay_buffer.async_append(replay)
 
     def _make_replay(self) -> List[NestedTensor]:
-        s, a, r, _, d, pi_ref = self._trajectory.get()
+        s, a, r, d, pi_ref = self._trajectory.get()
         discount_t = torch.logical_not(d) * self._gamma
         return [s, a, r, discount_t, pi_ref]
 
@@ -121,7 +120,7 @@ class ImpalaLearner(Learner):
         t0 = time.perf_counter()
         _, batch, _ = self._replay_buffer.sample(self._batch_size)
         n_samples = self._batch_size * batch[0][0].shape[0]
-        batch = nested_utils.map_nested(lambda x: x.to(self.device()), batch)
+        batch = nested_utils.map_nested(lambda x: x.to(self.device()),  batch)
         t1 = time.perf_counter()
         metrics = self._train_step(batch)
         t2 = time.perf_counter()
