@@ -26,8 +26,6 @@ except RuntimeError:
         return results
 
 
-#
-
 class ImpalaActor(Actor):
     def __init__(self, model: ModelLike,
                  replay_buffer: ReplayBufferLike,
@@ -65,30 +63,25 @@ class ImpalaActor(Actor):
                             next_timestep: TimeStep) -> None:
         if self._replay_buffer is None:
             return
-        obs = self._last_transition
+        obs = self._last_transition.obeservation
         act, action_info = action
         next_obs, reward, done, _ = next_timestep
-        self._trajectory.stack((obs, act, reward, next_obs, done, action_info["logpi"]))
-        self._last_transition = next_obs.clone()
+        self._trajectory.append((obs, act, reward, next_obs, done, action_info["logpi"]))
+        self._last_transition = next_timestep
 
     async def async_update(self) -> None:
-        if self._replay_buffer is not None:
-            if not self._trajectory.empty():
-                replay = await self._async_make_replay()
-                await self._async_send_replay(replay)
+        if self._replay_buffer is None or self._trajectory.empty():
+            return
+        replay = await self._async_make_replay()
+        await self._replay_buffer.async_append(replay)
 
     def _make_replay(self) -> List[NestedTensor]:
         s, a, r, _, d, pi_ref = self._trajectory.get()
-        not_done = torch.logical_not(d)
-        mask = torch.ones_like(not_done) * not_done.roll(1, dims=(0,))
-        discount_t = (mask * not_done) * self._gamma
+        discount_t = torch.logical_not(d) * self._gamma
         return [s, a, r, discount_t, pi_ref]
 
     async def _async_make_replay(self) -> List[NestedTensor]:
         return self._make_replay()
-
-    async def _async_send_replay(self, replay: List[NestedTensor]) -> None:
-        await self._replay_buffer.async_append(replay)
 
 
 class ImpalaLearner(Learner):

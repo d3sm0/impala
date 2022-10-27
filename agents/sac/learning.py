@@ -52,26 +52,13 @@ class SACActorRemote(agents.core.Actor):
         self._last_transition = next_obs.clone()
 
     async def async_update(self) -> None:
-        if self._replay_buffer is not None:
-            if not self._trajectory.empty():
-                replay = await self._async_make_replay()
-                await self._async_send_replay(replay)
-
-            # if self._last_transition.done:
-            #    replay = await self._async_make_replay()
-            #    await self._async_send_replay(replay)
-
-            # if len(self._trajectory) > self._rollout_length or self._trajectory[-1][-2]:
-            #     self._trajectory.clear()
+        if self._replay_buffer is None or self._trajectory.empty():
+            return
+        replay = await self._async_make_replay()
+        await self._async_send_replay(replay)
 
     def _make_replay(self) -> List[NestedTensor]:
-        # return self._trajectory
-        # return self._trajectory
         s, a, r, s1, d = self._trajectory.get()
-        # s, a, r, s1, d = self._trajectory
-        # s, a, r, s1, d = nested_utils.collate_nested(torch.stack, self._trajectory)
-        # TODO: save the last transition there  is a bug where the mask is not applied propery
-        # m = (torch.logical_not(d) * torch.ones_like(d)).roll(1, dims=(0,))
         return list(nested_utils.unbatch_nested(lambda x: x.unsqueeze(1), (s, a, r, s1, d), self._rollout_length))
 
     async def _async_make_replay(self) -> List[NestedTensor]:

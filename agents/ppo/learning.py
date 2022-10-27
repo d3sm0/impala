@@ -5,6 +5,7 @@
 import time
 from typing import Dict, List, Optional
 
+import moolib
 import rlego
 import rlmeta.utils.nested_utils as nested_utils
 import torch
@@ -31,8 +32,7 @@ class PPOActorRemote(Actor):
         self._deterministic_policy = torch.tensor([deterministic_policy])
         self._model = model
         self._replay_buffer = replay_buffer
-        self._rollout_length = rollout_length
-        self._trajectory = []
+        self._trajectory = moolib.Batcher(rollout_length, dim=0, device="cpu")
         self._last_transition = None
 
     async def async_act(self, timestep: TimeStep) -> Action:
@@ -53,18 +53,17 @@ class PPOActorRemote(Actor):
         obs = self._last_transition.observation
         act, action_info = action
         next_obs, reward, done, _ = next_timestep
-        self._trajectory.append((obs, act, reward, done, action_info["logpi"], action_info["v"]))
+        self._trajectory.stack((obs, act, reward, done, action_info["logpi"], action_info["v"]))
         self._last_transition = next_timestep
 
     async def async_update(self) -> None:
-        if self._replay_buffer is None or not self._last_transition.done:
+        if self._replay_buffer is None or self._trajectory.empty():
             return
         replay = await self._async_make_replay()
         await self._replay_buffer.async_extend(replay)
-        self._trajectory.clear()
 
     def _make_replay(self) -> List[NestedTensor]:
-        *batch, values = nested_utils.collate_nested(torch.stack, self._trajectory)
+        *batch, values = self._trajectory.get()
         s, a, r, d, pi_ref = nested_utils.map_nested(lambda x: x.squeeze(-1)[:-1], batch)
         discount_t = torch.logical_not(d) * self._gamma
         target_t = rlego.lambda_returns(r, discount_t, values.squeeze(dim=-1)[1:], self._lambda)  # noqa

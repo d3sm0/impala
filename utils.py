@@ -3,6 +3,8 @@ import random
 import time
 from typing import Optional
 
+from rlmeta.utils import nested_utils
+
 try:
     import aim
 except ImportError:
@@ -138,3 +140,31 @@ def create_evaluation_loops(cfg, env_factory: EnvFactory, agent_factory: AgentFa
                                  # episode_callbacks=RecordMetrics(),
                                  )
     return evaluate_loop
+
+
+class MockBatcher:
+    def __init__(self, size, device, dim):
+        self._size = size
+        self._device = device
+        self._dim = dim
+        self._batcher = []
+        self._stack_tensors = False
+
+    def get(self):
+        fn = torch.stack if self._stack_tensors else torch.cat
+        batched_data = nested_utils.collate_nested(fn, self._batcher)
+        self._batcher.clear()
+        return batched_data
+
+    def cat(self, *args):
+        self._batcher.append(args)
+
+    def stack(self, *args):
+        self._batcher.append(args)
+        self._stack_tensors = True
+
+    def size(self):
+        return len(self._batcher)
+
+    def empty(self):
+        return len(self._batcher) < self._size

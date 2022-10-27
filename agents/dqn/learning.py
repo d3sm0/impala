@@ -1,6 +1,7 @@
 import time
 from typing import Optional, Tuple, List, Dict
 
+import moolib
 # import functorch
 import rlego
 import torch
@@ -23,8 +24,7 @@ class ApexActor(Actor):
         self._replay_buffer = replay_buffer
         self._eps = torch.tensor((eps,), dtype=torch.float32)
         self._n_step = n_step
-        self._trajectory = []
-        self._rollout_length = rollout_length
+        self._trajectory = moolib.Batcher(rollout_length, dim=0, device="cpu")
         self._last_transition = None
         self._gamma = gamma
 
@@ -44,19 +44,17 @@ class ApexActor(Actor):
         obs = self._last_transition.observation
         action, action_info = action
         next_obs, reward, done, _ = next_timestep
-        self._trajectory.append((obs, action, reward, done, action_info["q"], action_info["v"]))
+        self._trajectory.stack((obs, action, reward, done, action_info["q"], action_info["v"]))
         self._last_transition = next_timestep
 
     async def async_update(self) -> None:
-        if self._replay_buffer is None or not self._last_transition.done:
+        if self._replay_buffer is None or self._trajectory.empty():
             return
         replay, priorities = await self._async_make_replay()
         await self._replay_buffer.async_extend(replay, priorities)
-        # TODO: can you clearn the list here?
-        self._trajectory.clear()
 
     async def _async_make_replay(self) -> Tuple[List[NestedTensor], torch.Tensor]:
-        s_tm1, *batch = nested_utils.collate_nested(torch.stack, self._trajectory)
+        s_tm1, *batch = self._trajectory.get()
         a_t, r_t, d_t, q_pi_t, q_star_t = nested_utils.map_nested(lambda x: x.squeeze(dim=1), batch)
 
         not_done = torch.logical_not(d_t)
@@ -71,7 +69,7 @@ class ApexDistributionalActor(ApexActor):
     def _make_replay(self) -> Tuple[List[NestedTensor], torch.Tensor]:
         # TODO: we should use vmap here but is not supported by the cluster
         # if so ApexActor and ApexDistributional should be merged
-        s_tm1, *batch = nested_utils.collate_nested(torch.stack, self._trajectory)
+        s_tm1, *batch = self._trajectory.get()
         a_t, r_t, d_t, q_pi_t, q_star_t = nested_utils.map_nested(lambda x: x.squeeze(dim=1), batch)
         not_done = torch.logical_not(d_t)
         discount_t = not_done * self._gamma
